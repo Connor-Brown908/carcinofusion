@@ -12,8 +12,12 @@ data/processed/*
 data/external/*
 !data/external/.gitkeep
 
-# Manifests and the freeze lock ARE provenance and should be committed.
-!manifests/*.json
+# Per-run manifests are OUTPUTS of a run, not source. Committing them would
+# put fixture-run provenance in the repository, where it reads as real.
+# Provenance travels with the data instead: DATASET_LOCK.json inside the
+# frozen dataset, and the benchmark_runs table in Supabase.
+manifests/*.json
+!manifests/.gitkeep
 
 __pycache__/
 *.py[cod]

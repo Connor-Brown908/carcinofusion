@@ -77,13 +77,33 @@ fi
 
 filesize() { wc -c <"$1" 2>/dev/null | tr -d ' '; }
 
-# A small or HTML response is an error page, not data. Saving it would send a
-# broken file into the pipeline, where it fails later and less clearly.
+# An error page is not data. Saving one sends a broken file into the pipeline,
+# where it fails later and less clearly — or worse, parses into garbage.
+#
+# An earlier version of this check only looked at whether the first 200 bytes
+# STARTED with an HTML tag, and a 16 KB NLM placeholder page sailed past it:
+# six different tables were saved with byte-identical content. The decisive
+# test is the one below — a tab-separated file has a tab on its first line and
+# an HTML page does not.
 plausible() {
   local f="$1"
   [ -s "$f" ] || return 1
   [ "$(filesize "$f")" -ge "$MIN_BYTES" ] || return 1
-  head -c 200 "$f" | tr '[:upper:]' '[:lower:]' | grep -q "<!doctype html\|<html" && return 1
+
+  # HTML markers anywhere in the opening chunk, not merely at byte zero.
+  if head -c 4096 "$f" | tr '[:upper:]' '[:lower:]' \
+       | grep -qE "<!doctype|<html|<head|<title|<body|<a href"; then
+    return 1
+  fi
+
+  # The decisive test: real CPDB tables are tab-separated, so the first
+  # non-empty line must contain a tab.
+  local firstline
+  firstline="$(head -n 5 "$f" | grep -m1 -v '^[[:space:]]*$' || true)"
+  case "$firstline" in
+    *"$(printf '\t')"*) : ;;
+    *) return 1 ;;
+  esac
   return 0
 }
 
@@ -144,10 +164,28 @@ fi
 
 echo
 echo "SHA-256 checksums (record these; the pipeline records them too):"
+SUMS=""
 if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$DEST" && sha256sum ./*.tab 2>/dev/null) || true
+  SUMS="$(cd "$DEST" && sha256sum ./*.tab 2>/dev/null)" || true
 elif command -v shasum >/dev/null 2>&1; then
-  (cd "$DEST" && shasum -a 256 ./*.tab 2>/dev/null) || true
+  SUMS="$(cd "$DEST" && shasum -a 256 ./*.tab 2>/dev/null)" || true
+fi
+[ -n "$SUMS" ] && echo "$SUMS"
+
+# Two CPDB tables holding identical bytes is not possible. If it happens, the
+# same error page was saved under several names and the files are worthless.
+if [ -n "$SUMS" ]; then
+  dupes="$(echo "$SUMS" | awk '{print $1}' | sort | uniq -d)"
+  if [ -n "$dupes" ]; then
+    echo
+    echo "WARNING: these files are byte-identical, which cannot be real data:" >&2
+    for h in $dupes; do
+      echo "$SUMS" | awk -v h="$h" '$1==h {printf "    %s\n", $2}' >&2
+    done
+    echo "  They are almost certainly one error page saved under several names." >&2
+    echo "  Delete them and retry, optionally forcing the other mirror:" >&2
+    echo "    MIRROR=toxplanet bash scripts/fetch_cpdb.sh" >&2
+  fi
 fi
 
 if [ "$fail_required" -gt 0 ]; then

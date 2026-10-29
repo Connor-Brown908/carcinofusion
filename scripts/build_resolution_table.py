@@ -45,8 +45,46 @@ from pathlib import Path
 LOG = logging.getLogger("build_resolution")
 
 PUBCHEM = "https://pubchem.ncbi.nlm.nih.gov/rest/pug"
-PROPS = "CanonicalSMILES,IsomericSMILES,InChI,InChIKey,MolecularFormula,MolecularWeight"
 USER_AGENT = "carcinofusion-dataset-pipeline/1.0 (research use)"
+
+# PubChem's SMILES property names have changed, and a request naming only the
+# old ones can come back 200 OK with the other properties present and the
+# SMILES keys simply absent — which looks like a successful lookup that
+# resolved nothing. An earlier version of this script asked for
+# CanonicalSMILES,IsomericSMILES and reported "0 resolved" beside "20 found",
+# which is exactly that failure.
+#
+# So the property list is not assumed. Each variant is tried until one returns
+# a row carrying something SMILES-shaped, and whichever worked is cached for
+# the rest of the run.
+PROPERTY_VARIANTS = [
+    # Current names (IsomericSMILES -> SMILES, CanonicalSMILES -> ConnectivitySMILES)
+    "SMILES,ConnectivitySMILES,InChI,InChIKey,MolecularFormula,MolecularWeight",
+    # Historical names, still served by some deployments
+    "CanonicalSMILES,IsomericSMILES,InChI,InChIKey,MolecularFormula,MolecularWeight",
+    # Minimal, in case a combined request is rejected outright
+    "SMILES,InChI,InChIKey",
+    "IsomericSMILES,InChI,InChIKey",
+]
+_working_props: str | None = None
+
+# Preference order when a row carries several SMILES flavours: a stereo-aware
+# SMILES beats a connectivity-only one, because Phase 1 keeps stereochemistry
+# and a flat SMILES would silently merge enantiomers.
+SMILES_KEY_PREFERENCE = ("IsomericSMILES", "SMILES", "CanonicalSMILES", "ConnectivitySMILES")
+
+
+def extract_smiles(row: dict) -> str:
+    """Pull SMILES out of a property row whatever PubChem called the field."""
+    for key in SMILES_KEY_PREFERENCE:
+        value = row.get(key)
+        if value:
+            return str(value)
+    # Anything else SMILES-shaped, so a future rename does not break this.
+    for key, value in row.items():
+        if "smiles" in key.lower() and value:
+            return str(value)
+    return ""
 
 # PubChem asks for no more than 5 requests a second and 400 a minute. Going
 # faster gets you throttled or blocked, and this is a one-time job, so the
@@ -97,17 +135,71 @@ def first_property_row(payload: dict | None) -> dict | None:
         return None
 
 
-def lookup_by_cas(cas: str) -> tuple[dict | None, str]:
+def lookup(term: str, source: str) -> tuple[str, str, dict | None]:
+    """Resolve one term to (smiles, source, row).
+
+    Tries each property variant until one yields a SMILES, then remembers
+    which variant worked. Returns the row even when no SMILES was found, so
+    the caller can report what PubChem actually sent back.
+    """
+    global _working_props
+    enc = urllib.parse.quote(term, safe="")
+    variants = (
+        [_working_props] + [p for p in PROPERTY_VARIANTS if p != _working_props]
+        if _working_props
+        else list(PROPERTY_VARIANTS)
+    )
+
+    last_row = None
+    for props in variants:
+        row = first_property_row(pubchem_get(f"compound/name/{enc}/property/{props}/JSON"))
+        if row is None:
+            continue
+        last_row = row
+        smiles = extract_smiles(row)
+        if smiles:
+            if _working_props != props:
+                LOG.info("PubChem property set in use: %s", props)
+                _working_props = props
+            return smiles, source, row
+    return "", "", last_row
+
+
+def lookup_by_cas(cas: str) -> tuple[str, str, dict | None]:
     """CAS numbers are registered in PubChem as synonyms, so name search works."""
-    enc = urllib.parse.quote(cas, safe="")
-    row = first_property_row(pubchem_get(f"compound/name/{enc}/property/{PROPS}/JSON"))
-    return (row, "pubchem_cas") if row else (None, "")
+    return lookup(cas, "pubchem_cas")
 
 
-def lookup_by_name(name: str) -> tuple[dict | None, str]:
-    enc = urllib.parse.quote(name, safe="")
-    row = first_property_row(pubchem_get(f"compound/name/{enc}/property/{PROPS}/JSON"))
-    return (row, "pubchem_name") if row else (None, "")
+def lookup_by_name(name: str) -> tuple[str, str, dict | None]:
+    return lookup(name, "pubchem_name")
+
+
+def diagnose(term: str) -> int:
+    """Show exactly what PubChem returns for one term, and stop.
+
+    A silent zero-resolution run is the worst outcome this script can have,
+    so there is a way to see the raw response rather than infer it.
+    """
+    enc = urllib.parse.quote(term, safe="")
+    print(f"Querying PubChem for: {term!r}\n")
+    for props in PROPERTY_VARIANTS:
+        payload = pubchem_get(f"compound/name/{enc}/property/{props}/JSON")
+        row = first_property_row(payload)
+        print(f"  properties requested : {props}")
+        if row is None:
+            print("  -> no row returned (404, error, or empty table)\n")
+            continue
+        print(f"  -> keys returned     : {sorted(row)}")
+        smiles = extract_smiles(row)
+        print(f"  -> SMILES extracted  : {smiles or '(none)'}\n")
+        if smiles:
+            print(f"This property set works. SMILES: {smiles}")
+            return 0
+    print(
+        "No property set yielded a SMILES. Paste this output into the issue "
+        "tracker; the key list above says what PubChem is serving now."
+    )
+    return 1
 
 
 def read_chemname(path: Path) -> list[dict]:
@@ -191,12 +283,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--limit", type=int, default=None, help="only the first N chemicals")
     ap.add_argument("--no-network", action="store_true", help="local sources only")
     ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument(
+        "--diagnose",
+        metavar="CAS_OR_NAME",
+        help="query PubChem for one term, print the raw fields, and exit",
+    )
     args = ap.parse_args(argv)
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)-7s %(message)s",
     )
+
+    if args.diagnose:
+        return diagnose(args.diagnose)
 
     chemname = Path(args.chemname)
     if not chemname.exists():
@@ -246,14 +346,29 @@ def main(argv: list[str] | None = None) -> int:
                     source = rec.get("source", "cache")
                     counts["cache"] += 1
             elif not args.no_network:
-                row, src = (lookup_by_cas(cas) if cas else (None, ""))
-                if not row and name:
-                    row, src = lookup_by_name(name)
-                if row:
-                    smiles = row.get("IsomericSMILES") or row.get("CanonicalSMILES", "")
-                    inchi = row.get("InChI", "")
-                    source = src
-                    counts[src] = counts.get(src, 0) + 1
+                row = None
+                if cas:
+                    smiles, source, row = lookup_by_cas(cas)
+                if not smiles and name:
+                    smiles, source, row2 = lookup_by_name(name)
+                    row = row2 or row
+                if smiles:
+                    inchi = (row or {}).get("InChI", "")
+                    counts[source] = counts.get(source, 0) + 1
+                elif row is not None:
+                    # PubChem answered but carried no SMILES. Surface the keys
+                    # it did send, once, rather than reporting a silent miss.
+                    counts["answered_without_smiles"] = (
+                        counts.get("answered_without_smiles", 0) + 1
+                    )
+                    if counts["answered_without_smiles"] == 1:
+                        LOG.warning(
+                            "PubChem returned a record with no SMILES field. "
+                            "Keys present: %s. Run with --diagnose '%s' to see "
+                            "the full response.",
+                            sorted(row),
+                            cas or name,
+                        )
                 cache[key] = {"smiles": smiles, "inchi": inchi, "source": source}
                 if i % 25 == 0:
                     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -316,6 +431,13 @@ def main(argv: list[str] | None = None) -> int:
     for k, v in sorted(counts.items(), key=lambda kv: -kv[1]):
         if v:
             print(f"  {k:24s} {v}")
+    if counts.get("answered_without_smiles"):
+        print(
+            f"\n  {counts['answered_without_smiles']} chemical(s) were FOUND in "
+            f"PubChem but the response carried no SMILES field.\n"
+            f"  That is an API shape problem, not a coverage problem. Inspect it:\n"
+            f"      python3 scripts/build_resolution_table.py --diagnose 71-43-2"
+        )
     print(
         "\nReview the unresolved list by hand before freezing. Those chemicals\n"
         "stay in structure_review.parquet and never receive a label, so a gap\n"

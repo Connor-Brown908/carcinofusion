@@ -24,16 +24,15 @@ bash tests/run_pipeline.sh
 bash scripts/fetch_cpdb.sh                        # downloads into data/raw/cpdb/
 python -m src.ingestion.download_cpdb --print-urls  # or fetch them by hand
 
-# 4. run it for real
-python -m src.ingestion.download_cpdb
-python -m src.ingestion.parse_cpdb
-python -m src.chemistry.resolve_identity
-python -m src.curation.harmonize_labels
-python -m src.curation.audit_conflicts
-python -m src.datasets.build_dataset
-python -m src.datasets.split_dataset
-python -m src.curation.build_ledger
-python -m src.datasets.freeze_dataset --note "initial Phase 1 freeze"
+# 4. verify the column mapping against YOUR files
+python3 scripts/check_columns.py
+
+# 5. build the structure table (10-20 min)
+python3 scripts/build_resolution_table.py
+
+# 6. run the curation pipeline on real data
+bash scripts/run_production.sh            # stops before the freeze, for review
+bash scripts/run_production.sh --freeze --from 9   # freeze once reviewed
 ```
 
 ---
@@ -190,7 +189,9 @@ carcinofusion/
 │   └── benchmark_protocol.md  the Phase 2 experimental protocol
 ├── scripts/
 │   ├── fetch_cpdb.sh          standalone CPDB downloader
-│   └── build_resolution_table.py  CAS/name -> SMILES via PubChem
+│   ├── build_resolution_table.py  CAS/name -> SMILES via PubChem
+│   ├── check_columns.py       verify cpdb_columns.yaml against real headers
+│   └── run_production.sh      the pipeline on real data, with checkpoints
 ├── sql/schema.sql             PostgreSQL DDL
 ├── src/
 │   ├── common.py              config, manifests, column mapping

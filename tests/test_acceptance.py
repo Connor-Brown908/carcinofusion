@@ -233,7 +233,10 @@ class TestLabelConsistency:
 
     def test_both_endpoints_are_produced(self):
         cfg = load_config("labels")
-        for name in cfg["endpoints"]:
+        names = list(cfg["endpoints"])
+        if not (PROCESSED / f"model_dataset_{names[0]}.parquet").exists():
+            pytest.skip("pipeline not run; see bash tests/run_pipeline.sh")
+        for name in names:
             assert (PROCESSED / f"model_dataset_{name}.parquet").exists()
 
     def test_labels_are_reproducible_from_the_policy(self, observations):
@@ -454,6 +457,16 @@ class TestReproducibility:
             "07_split_dataset",
             "08_ledger",
         ]
+        # Manifests are run outputs, not source, so a fresh checkout has none.
+        # Skipping matches the other artefact-dependent tests; failing here
+        # would make a clean clone look broken.
+        #
+        # The guard anchors on the FIRST stage rather than on "any manifest
+        # exists": the byte-reproducibility test above re-runs build_ledger in
+        # a subprocess, which writes 08_ledger_latest.json, so an `any` guard
+        # would see that file and wrongly conclude the pipeline had been run.
+        if not (MANIFESTS / "02_parse_cpdb_latest.json").exists():
+            pytest.skip("pipeline not run; see bash tests/run_pipeline.sh")
         for stage in expected:
             assert (MANIFESTS / f"{stage}_latest.json").exists(), stage
 

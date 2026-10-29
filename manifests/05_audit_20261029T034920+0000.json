@@ -1,0 +1,70 @@
+{
+  "stage": "05_audit",
+  "started_at": "2026-10-29T03:49:20+00:00",
+  "finished_at": "2026-10-29T03:49:20+00:00",
+  "inputs": [
+    {
+      "path": "/home/claude/carcinofusion/data/interim/carcinogenicity_experiments.parquet",
+      "exists": true,
+      "sha256": "5fd55ece94c94d2a87523eb4b4ce56c508a686a4e57e7d286dd8590c93b4dbcf",
+      "bytes": 17140
+    },
+    {
+      "path": "/home/claude/carcinofusion/data/interim/compound_identity.parquet",
+      "exists": true,
+      "sha256": "1d433d4b0bd393123abcc148941b84c388f17582abc0aa4366db019812fc2f17",
+      "bytes": 19860
+    },
+    {
+      "path": "/home/claude/carcinofusion/data/interim/structure_review.parquet",
+      "exists": true,
+      "sha256": "f428c358bc2123edf4ecb97d81098bcd338ea433edf77682d909ff3efee0956f",
+      "bytes": 5746
+    },
+    {
+      "path": "/home/claude/carcinofusion/data/interim/observations_labeled.parquet",
+      "exists": true,
+      "sha256": "82ce6a1f62ed94a9a09402894de888d291edd10318a29b5d742710f7a5889456",
+      "bytes": 20192
+    },
+    {
+      "path": "/home/claude/carcinofusion/data/interim/compound_labels.parquet",
+      "exists": true,
+      "sha256": "d92b722d293ac5cf076f722b2a249fb840e150c13401c480a320e87d644676d1",
+      "bytes": 16107
+    }
+  ],
+  "outputs": [
+    {
+      "path": "/home/claude/carcinofusion/data/processed/conflicts_detail.parquet",
+      "rows": 6,
+      "sha256": "afee169c2253ad1e856025d7fba801a45d50354ad685c673f0a21a4e7d524949",
+      "bytes": 12020
+    },
+    {
+      "path": "/home/claude/carcinofusion/data/processed/audit_report.json",
+      "sha256": "d05ff936f81dce15fda493a9fa85f20e798e26e45974d9fb16dc2393beecd964",
+      "bytes": 3585
+    },
+    {
+      "path": "/home/claude/carcinofusion/data/processed/audit_report.md",
+      "sha256": "f561071fd55c650ae5c33d3fb2fd7f8e4e04428d393f57e9740092d5223b98b2",
+      "bytes": 1973
+    }
+  ],
+  "config_versions": {
+    "dataset_version": "v1",
+    "label_policy_version": "v1.0.0"
+  },
+  "counts": {
+    "compounds": 36,
+    "conflicted_rows": 6,
+    "structures_in_review": 3
+  },
+  "warnings": [],
+  "environment": {
+    "python": "3.13.18",
+    "platform": "Linux-6.18.44-fc-v185-x86_64-with-glibc2.39",
+    "rdkit": "2026.09.1"
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "stage": "07_split_dataset",
+  "started_at": "2026-10-29T03:49:21+00:00",
+  "finished_at": "2026-10-29T03:49:21+00:00",
+  "inputs": [
+    {
+      "path": "/home/claude/carcinofusion/data/processed/model_dataset_primary.parquet",
+      "exists": true,
+      "sha256": "306178afaab5761823e022fb5b8604a21ca8a5f80764f60052804781e14c8e72",
+      "bytes": 30707
+    },
+    {
+      "path": "/home/claude/carcinofusion/data/processed/model_dataset_sensitivity.parquet",
+      "exists": true,
+      "sha256": "69e0a121837163bc07e6903b4d2c8026b1db28ab23bdc96edffb4ffa8daffc2c",
+      "bytes": 30727
+    }
+  ],
+  "outputs": [
+    {
+      "path": "/home/claude/carcinofusion/data/processed/splits_primary.parquet",
+      "rows": 72,
+      "sha256": "d753cedf5917f770e586ae82a4657ec4f186ed16bf0a90d01e3aacea96ae9573",
+      "bytes": 34088
+    },
+    {
+      "path": "/home/claude/carcinofusion/data/processed/split_report_primary.json",
+      "sha256": "53f161067134f7723c8aad8f9e688875256be31d11436768bd3b899ddd1372f7",
+      "bytes": 3306
+    },
+    {
+      "path": "/home/claude/carcinofusion/data/processed/splits_sensitivity.parquet",
+      "rows": 72,
+      "sha256": "7552a109ee00b35be14ce3f3988867d1edf179f730f23fd78e23639adc2d8a75",
+      "bytes": 34202
+    },
+    {
+      "path": "/home/claude/carcinofusion/data/processed/split_report_sensitivity.json",
+      "sha256": "338684514ff5cafbd199b5361c4e092dba4c94f7d58472b645344fce23800958",
+      "bytes": 3305
+    }
+  ],
+  "config_versions": {
+    "dataset_version": "v1",
+    "split_version": "v1",
+    "random_seed": 20261029,
+    "label_policy_version": "v1.0.0"
+  },
+  "counts": {
+    "endpoint_primary": {
+      "compounds_partitioned": 28,
+      "strategies": [
+        "random",
+        "scaffold"
+      ]
+    },
+    "endpoint_sensitivity": {
+      "compounds_partitioned": 30,
+      "strategies": [
+        "random",
+        "scaffold"
+      ]
+    }
+  },
+  "warnings": [
+    "random/test: 1 compound(s) have a fingerprint identical to a training compound (Tanimoto 1.0). These are effectively seen during training even though no InChIKey is shared; usually stereoisomers or tautomers that the fingerprint cannot distinguish.",
+    "random/train: 9 negative(s), below the configured minimum of 10",
+    "random/validation: 0 positive(s), below the configured minimum of 10",
+    "random/validation: 5 negative(s), below the configured minimum of 10",
+    "random/test: 2 positive(s), below the configured minimum of 10",
+    "random/test: 2 negative(s), below the configured minimum of 10",
+    "scaffold/train: 9 positive(s), below the configured minimum of 10",
+    "scaffold/validation: 2 positive(s), below the configured minimum of 10",
+    "scaffold/validation: 3 negative(s), below the configured minimum of 10",
+    "scaffold/test: 1 positive(s), below the configured minimum of 10",
+    "scaffold/test: 3 negative(s), below the configured minimum of 10",
+    "random/test: 1 compound(s) have a fingerprint identical to a training compound (Tanimoto 1.0). These are effectively seen during training even though no InChIKey is shared; usually stereoisomers or tautomers that the fingerprint cannot distinguish.",
+    "random/validation: 1 positive(s), below the configured minimum of 10",
+    "random/validation: 4 negative(s), below the configured minimum of 10",
+    "random/test: 2 positive(s), below the configured minimum of 10",
+    "random/test: 2 negative(s), below the configured minimum of 10",
+    "scaffold/validation: 1 positive(s), below the configured minimum of 10",
+    "scaffold/validation: 4 negative(s), below the configured minimum of 10",
+    "scaffold/test: 2 positive(s), below the configured minimum of 10",
+    "scaffold/test: 2 negative(s), below the configured minimum of 10"
+  ],
+  "environment": {
+    "python": "3.13.18",
+    "platform": "Linux-6.18.44-fc-v185-x86_64-with-glibc2.39",
+    "rdkit": "2026.09.1"
+  }
+}

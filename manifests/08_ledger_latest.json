@@ -1,7 +1,7 @@
 {
   "stage": "08_ledger",
-  "started_at": "2026-10-29T03:48:33+00:00",
-  "finished_at": "2026-10-29T03:48:33+00:00",
+  "started_at": "2026-10-29T03:55:26+00:00",
+  "finished_at": "2026-10-29T03:55:26+00:00",
   "inputs": [
     {
       "path": "/home/claude/carcinofusion/data/interim/structure_review.parquet",
@@ -55,7 +55,7 @@
     },
     {
       "path": "/home/claude/carcinofusion/data/processed/curation_ledger_summary.json",
-      "sha256": "1b4f903135009fc07fde5a358421ed3accc0a1963d76893e69ff77ff216516dc",
+      "sha256": "1b40d2fcd8260b4999b9d76efe38c63d73bff6080d163616df88f6ffcdff7281",
       "bytes": 1579
     }
   ],

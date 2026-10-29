@@ -1,0 +1,35 @@
+{
+  "stage": "01_acquire_cpdb",
+  "started_at": "2026-10-29T03:49:18+00:00",
+  "finished_at": "2026-10-29T03:49:18+00:00",
+  "inputs": [],
+  "outputs": [],
+  "config_versions": {
+    "dataset_version": "v1",
+    "source_database": "CPDB",
+    "base_url": "https://ftp.nlm.nih.gov/projects/extract/CPDB/"
+  },
+  "counts": {
+    "files_present": 0,
+    "missing_required": [
+      "cpdb.ncintp.tab",
+      "cpdb.lit.tab",
+      "cpdb.chemname.tab"
+    ],
+    "missing_optional": [
+      "cpdb.ncntdose.tab",
+      "cpdb.litdose.tab"
+    ],
+    "retrieval_date": "2026-10-29T03:49:18+00:00"
+  },
+  "warnings": [
+    "optional file absent: cpdb.ncntdose.tab (dose/incidence detail will be unavailable)",
+    "optional file absent: cpdb.litdose.tab (dose/incidence detail will be unavailable)",
+    "required files absent: ['cpdb.ncintp.tab', 'cpdb.lit.tab', 'cpdb.chemname.tab']"
+  ],
+  "environment": {
+    "python": "3.13.18",
+    "platform": "Linux-6.18.44-fc-v185-x86_64-with-glibc2.39",
+    "rdkit": "2026.09.1"
+  }
+}

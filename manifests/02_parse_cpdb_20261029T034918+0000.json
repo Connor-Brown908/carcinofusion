@@ -1,0 +1,95 @@
+{
+  "stage": "02_parse_cpdb",
+  "started_at": "2026-10-29T03:49:18+00:00",
+  "finished_at": "2026-10-29T03:49:18+00:00",
+  "inputs": [
+    {
+      "path": "/home/claude/carcinofusion/data/raw/cpdb_test/cpdb.ncintp.tab",
+      "exists": true,
+      "file_key": "ncintp",
+      "sha256": "a58e066154cf9cee2cc9485c5a9ac5475f703f83229e27bb332ba31c3e7713a1",
+      "bytes": 3604
+    },
+    {
+      "path": "/home/claude/carcinofusion/data/raw/cpdb_test/cpdb.lit.tab",
+      "exists": true,
+      "file_key": "lit",
+      "sha256": "4d14b5dfb9c86e08a0adef88d2d4844026be88bb07e0f7e771f255f6755675bd",
+      "bytes": 3665
+    },
+    {
+      "path": "/home/claude/carcinofusion/data/raw/cpdb_test/cpdb.chemname.tab",
+      "exists": true,
+      "file_key": "chemname",
+      "sha256": "60d02544e253c2ff7cb69a8f7cf27b097f3c82a48b743d55b01d99bc10bdb172",
+      "bytes": 1159
+    },
+    {
+      "path": "/home/claude/carcinofusion/data/raw/cpdb_test/cpdb.ncntdose.tab",
+      "exists": true,
+      "file_key": "ncntdose",
+      "sha256": "cb78d992be890d0050fd35260e4cc29cbcb6e2a6b05a4ebfcfa468adcf0005ee",
+      "bytes": 8603
+    }
+  ],
+  "outputs": [
+    {
+      "path": "/home/claude/carcinofusion/data/interim/carcinogenicity_experiments.parquet",
+      "rows": 74,
+      "sha256": "5fd55ece94c94d2a87523eb4b4ce56c508a686a4e57e7d286dd8590c93b4dbcf",
+      "bytes": 17140
+    }
+  ],
+  "config_versions": {
+    "dataset_version": "v1",
+    "join_key": "chemcode"
+  },
+  "counts": {
+    "cas_filled_from_chemname": 74,
+    "dose_attachment": {
+      "key_set": [
+        "chemcode",
+        "species",
+        "sex",
+        "strain",
+        "exposure_route",
+        "target_organ"
+      ],
+      "experiments_with_dose_detail": 74,
+      "experiments_ambiguous_key_left_unattached": 0,
+      "dose_groups_with_no_matching_experiment": 0
+    },
+    "experiment_records": 74,
+    "unique_chemcodes": 41,
+    "unique_cas_numbers": 41,
+    "records_missing_cas": 0,
+    "records_missing_assessment": 2,
+    "records_with_td50": 29,
+    "by_source": {
+      "CPDB:NCI/NTP": 37,
+      "CPDB:literature": 37
+    },
+    "by_species": {
+      "rat": 50,
+      "mouse": 23,
+      "hamster": 1
+    },
+    "assessment_values": {
+      "No evidence of carcinogenic activity": 37,
+      "Clear evidence of carcinogenic activity": 29,
+      "Some evidence of carcinogenic activity": 3,
+      "Equivocal evidence of carcinogenic activity": 2,
+      "<null>": 2,
+      "Probably fine honestly": 1
+    }
+  },
+  "warnings": [
+    "cpdb.ncintp.tab: optional column(s) not present and left null: ['cas_number']",
+    "cpdb.lit.tab: optional column(s) not present and left null: ['cas_number']"
+  ],
+  "environment": {
+    "python": "3.13.18",
+    "platform": "Linux-6.18.44-fc-v185-x86_64-with-glibc2.39",
+    "rdkit": "2026.09.1"
+  }
+}

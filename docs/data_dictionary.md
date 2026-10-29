@@ -14,6 +14,7 @@ One row per experimental record.
 | `experiment_id` | str | internal identifier, `EXP0000001` |
 | `source_database` | str | `CPDB:NCI/NTP` or `CPDB:literature` |
 | `source_record_id` | str | `filename:rownumber`, traces to the exact source line |
+| `idnum` | str | **CPDB's own experiment identifier**, and the key the dose tables reference |
 | `chemcode` | str | CPDB chemical code, the documented join key |
 | `chemical_name` | str | name from the chemname table |
 | `cas_number` | str | CAS Registry Number where available |
@@ -30,8 +31,14 @@ One row per experimental record.
 | `author_assessment` | str | the assessment used for labelling |
 | `author_assessment_raw` | str | **original** source value |
 | `td50` | float | potency estimate, null when absent or non-numeric |
-| `tumor_incidence` | str | `tumour/treated` per dose group, `;`-separated |
-| `dose_response` | str | dose levels, `;`-separated |
+| `td50_lower` / `td50_upper` | float | TD50 confidence limits (`lc`, `uc`) |
+| `p_value` | float | significance of the dose-response (`pval`) |
+| `n_control` / `n_control_tumors` | int | control group size and tumour count (`ctotal`, `ctumors`) |
+| `n_doses` | int | number of dose groups the source reports |
+| `inadequate_flag` | str | CPDB's own flag for a study it considers inadequate (`inad`) |
+| `tumor_incidence` | str | `tumour/treated` per dose group, in dose order, `;`-separated |
+| `dose_response` | str | dose levels in ascending order, `;`-separated |
+| `n_dose_groups` | int | dose groups attached from the dose table |
 | `reference` | str | study citation |
 | `notes` | str | source notes |
 | `curation_status` | str | `parsed` until reviewed |

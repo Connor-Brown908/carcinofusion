@@ -600,3 +600,75 @@ class TestAuditability:
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ---------------------------------------------------------------------------
+# CPDB schema fidelity
+# ---------------------------------------------------------------------------
+class TestCpdbSchema:
+    """The fixture and config must match the real CPDB distribution.
+
+    An earlier version guessed both: it put a chemcode in the dose tables,
+    which CPDB does not have, and joined dose detail on a six-column
+    composite key that does not exist. The tests passed against a schema that
+    was not real, which is worse than no tests.
+    """
+
+    def test_dose_block_joins_on_idnum_not_chemcode(self):
+        cfg = load_config("cpdb_columns")
+        assert cfg["dose_join_key"] == "idnum"
+        assert "idnum" in cfg["dose"]["required"]
+        assert "chemcode" not in cfg["dose"], (
+            "CPDB dose tables carry no chemcode"
+        )
+
+    def test_experiments_require_the_experiment_identifier(self):
+        assert "idnum" in load_config("cpdb_columns")["experiments"]["required"]
+
+    def test_real_cpdb_header_names_are_in_the_alias_lists(self):
+        """Names taken from the live files, verified with check_columns.py."""
+        exp = load_config("cpdb_columns")["experiments"]
+        for canonical, real_name in [
+            ("idnum", "idnum"),
+            ("target_organ", "tissue"),
+            ("tumor_endpoint", "tumor"),
+            ("reference", "papernum"),
+            ("dose_duration", "xpotime"),
+            ("study_duration", "xprtime"),
+            ("author_assessment", "opinion"),
+        ]:
+            assert real_name in exp[canonical], f"{canonical} must accept '{real_name}'"
+        dose = load_config("cpdb_columns")["dose"]
+        for canonical, real_name in [
+            ("n_treated", "total"),
+            ("n_with_tumor", "tumors"),
+            ("dose_order", "order"),
+        ]:
+            assert real_name in dose[canonical], f"{canonical} must accept '{real_name}'"
+
+    def test_chemname_accepts_the_real_header_names(self):
+        cn = load_config("cpdb_columns")["chemname"]
+        assert "cas" in cn["cas_number"]
+        assert "name" in cn["chemical_name"]
+
+    def test_dose_detail_attached_in_dose_order(self, experiments):
+        """Written reversed in the fixture, so file order would show it."""
+        with_dose = experiments[experiments["dose_response"].notna()]
+        if with_dose.empty:
+            pytest.skip("no dose detail in this run")
+        levels = [float(x) for x in with_dose.iloc[0]["dose_response"].split("; ")]
+        assert levels == sorted(levels), "dose groups must be emitted in `order`"
+
+    def test_every_experiment_carries_an_idnum(self, experiments):
+        assert experiments["idnum"].notna().all()
+
+    def test_dose_attachment_used_the_idnum_join(self):
+        path = MANIFESTS / "02_parse_cpdb_latest.json"
+        if not path.exists():
+            pytest.skip("parse manifest absent")
+        rec = json.loads(path.read_text(encoding="utf-8"))
+        att = rec["counts"].get("dose_attachment")
+        if not att:
+            pytest.skip("no dose tables in this run")
+        assert att["join_key"] == "idnum"
+        assert att["experiments_with_dose_detail"] > 0

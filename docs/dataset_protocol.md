@@ -66,12 +66,26 @@ Every standardised column has a `*_raw` companion holding exactly what the
 source said: `species_raw`, `sex_raw`, `author_assessment_raw`. Auditing a
 conflicting result is impossible once the original value has been overwritten.
 
-### Dose detail is joined, never aligned by position
+### Dose detail joins on the experiment identifier
 
-Dose and incidence rows are attached on `chemcode` plus whichever of species,
-sex, strain, route and organ are present in both tables. A dose group matching
-more than one experiment is left **unattached** and counted, rather than
-duplicated across records. Row order is never used.
+CPDB's dose tables carry **no chemcode**. Each row is one dose group belonging
+to the experiment named by `idnum`, with `order` giving its place in the dose
+series. The join is therefore `dose.idnum -> experiment.idnum`: exact,
+one-to-many, and needing no heuristics.
+
+Groups are emitted in `order`, not file order, so the dose series and the
+incidence series read low-to-high and line up with each other.
+
+Verify the mapping against your own download before the first run:
+
+```bash
+python3 scripts/check_columns.py
+```
+
+It reports, per file, which canonical column matched which header, which
+required ones are missing, and which columns exist in the file but are named
+nowhere in the config — the last list is usually where a missing field turns
+up under an unexpected name.
 
 ---
 

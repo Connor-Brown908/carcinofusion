@@ -17,30 +17,54 @@
 # the experiment tables, the chemical-name table and the dose tables. Joins are
 # performed on it alone. Row order is never used to associate records.
 
+# `chemcode` links an experiment to its chemical (via cpdb.chemname.tab).
+# `idnum` is the experiment's own identifier and is what the dose tables
+# reference — they carry no chemcode at all, so dose detail joins on idnum
+# alone. Verified against the real headers with scripts/check_columns.py.
 join_key: chemcode
+dose_join_key: idnum
 
 # ---------------------------------------------------------------------------
 # Experiment tables: cpdb.ncintp.tab and cpdb.lit.tab
 # ---------------------------------------------------------------------------
 experiments:
   # canonical_name: [accepted source header aliases, in priority order]
+  idnum:           [idnum, id_num, IDNUM]
   chemcode:        [chemcode, chem_code, CHEMCODE]
   cas_number:      [casno, cas, cas_no, CASNO]
   species:         [species, spec, SPECIES]
   sex:             [sex, SEX]
   strain:          [strain, STRAIN]
   exposure_route:  [route, xpo_route, exposure_route, ROUTE]
-  dose_duration:   [xpo, dosedur, exposure_duration, XPO]
-  study_duration:  [dur, duration, study_duration, DUR]
-  target_organ:    [site, target_site, tissue, SITE]
-  tumor_endpoint:  [tumor_type, tumour_type, histopath, TUMORTYPE]
+  # xpotime is how long the animals were dosed; xprtime how long the
+  # experiment ran. They differ whenever dosing stopped before termination.
+  dose_duration:   [xpotime, xpo, dosedur, exposure_duration, XPO]
+  study_duration:  [xprtime, dur, duration, study_duration, DUR]
+  target_organ:    [tissue, site, target_site, SITE]
+  tumor_endpoint:  [tumor, tumor_type, tumour_type, histopath, TUMORTYPE]
   td50:            [td50, TD50]
+  # TD50 confidence limits. A TD50 whose interval spans an order of magnitude
+  # is a different kind of number from one that does not, and potency
+  # modelling needs to know which it has.
+  td50_lower:      [lc, td50_lc, lower_limit]
+  td50_upper:      [uc, td50_uc, upper_limit]
+  p_value:         [pval, p_value, pvalue]
   author_assessment: [opinion, author_opinion, opin, OPINION]
-  reference:       [refnum, reference, ref, REFNUM]
+  reference:       [papernum, refnum, reference, ref, REFNUM]
+  # Control group, from the experiment record. Without it a treated-group
+  # tumour count cannot be read as evidence of anything.
+  n_control:       [ctotal, control_total]
+  n_control_tumors: [ctumors, control_tumors]
+  n_doses:         [ndoses, n_doses]
+  # CPDB's own flag for a study it considers inadequate. Worth carrying
+  # through so the label policy can act on it rather than inferring
+  # adequacy from the assessment string alone.
+  inadequate_flag: [inad, inadequate]
   notes:           [notes, note, NOTES]
 
   # Columns that must be present for the parse to proceed at all.
   required:
+    - idnum
     - chemcode
     - species
     - author_assessment
@@ -59,19 +83,20 @@ chemname:
 # ---------------------------------------------------------------------------
 # Dose / incidence tables: cpdb.ncntdose.tab and cpdb.litdose.tab
 # ---------------------------------------------------------------------------
+# The dose tables carry no chemcode. Each row is one dose group belonging to
+# the experiment named by `idnum`, with `order` giving the group's position in
+# the dose series. The join is therefore idnum -> experiment.idnum, which is
+# exact; an earlier version of this config guessed a six-column composite key
+# that does not exist in these files.
 dose:
-  chemcode:        [chemcode, chem_code, CHEMCODE]
-  species:         [species, spec, SPECIES]
-  sex:             [sex, SEX]
-  strain:          [strain, STRAIN]
-  exposure_route:  [route, xpo_route, exposure_route, ROUTE]
-  target_organ:    [site, target_site, tissue, SITE]
+  idnum:           [idnum, id_num, IDNUM]
+  dose_order:      [order, dose_order, seq]
   dose_level:      [dose, dosemg, dose_level, DOSE]
-  n_treated:       [ntreated, n_treated, total, NTREATED]
-  n_with_tumor:    [ntumor, n_tumor, tumor_count, NTUMOR]
+  n_treated:       [total, ntreated, n_treated, NTREATED]
+  n_with_tumor:    [tumors, ntumor, n_tumor, tumor_count, NTUMOR]
 
   required:
-    - chemcode
+    - idnum
 
 # ---------------------------------------------------------------------------
 # Value vocabularies

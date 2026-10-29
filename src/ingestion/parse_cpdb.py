@@ -43,6 +43,7 @@ EXPERIMENT_COLUMNS = [
     "experiment_id",
     "source_database",
     "source_record_id",
+    "idnum",
     "chemcode",
     "chemical_name",
     "cas_number",
@@ -59,8 +60,16 @@ EXPERIMENT_COLUMNS = [
     "author_assessment",
     "author_assessment_raw",
     "td50",
+    "td50_lower",
+    "td50_upper",
+    "p_value",
+    "n_control",
+    "n_control_tumors",
+    "n_doses",
+    "inadequate_flag",
     "tumor_incidence",
     "dose_response",
+    "n_dose_groups",
     "reference",
     "notes",
     "curation_status",
@@ -118,13 +127,15 @@ def parse_experiment_table(
     out = pd.DataFrame(index=raw.index)
 
     out["source_database"] = source_database
-    # A stable per-file record identifier: the source's own row position.
-    # Recorded so that any derived row can be traced back to the exact line.
+    # Row position, recorded so a derived row traces back to the exact line.
+    # CPDB's own idnum is the better identifier and is kept separately; this
+    # stays because it is the only thing that still works when idnum is null.
     out["source_record_id"] = [f"{path.name}:{i}" for i in range(len(raw))]
 
     def clean(canonical: str) -> pd.Series:
         return _series(raw, resolved, canonical).map(lambda v: normalise_null(v, nulls))
 
+    out["idnum"] = clean("idnum")
     out["chemcode"] = clean("chemcode")
     out["cas_number"] = clean("cas_number")
 
@@ -144,6 +155,13 @@ def parse_experiment_table(
     out["tumor_endpoint"] = clean("tumor_endpoint")
     out["reference"] = clean("reference")
     out["notes"] = clean("notes")
+    out["inadequate_flag"] = clean("inadequate_flag")
+
+    # Numeric fields carried through for potency work and for reading a
+    # treated-group tumour count against its control.
+    for canonical in ("td50_lower", "td50_upper", "p_value", "n_control",
+                      "n_control_tumors", "n_doses"):
+        out[canonical] = pd.to_numeric(clean(canonical), errors="coerce")
 
     td50 = clean("td50")
     out["td50"] = pd.to_numeric(td50, errors="coerce")
@@ -157,6 +175,7 @@ def parse_experiment_table(
     out["chemical_name"] = None
     out["tumor_incidence"] = None
     out["dose_response"] = None
+    out["n_dose_groups"] = None
     out["curation_status"] = "parsed"
     return out
 
@@ -218,48 +237,56 @@ def parse_dose(path: Path, colcfg: dict, man: StageManifest) -> pd.DataFrame:
         out["species"] = out["species"].map(lambda v: normalise_vocab(v, vocab["species"]))
     if "sex" in out:
         out["sex"] = out["sex"].map(lambda v: normalise_vocab(v, vocab["sex"]))
-    return out[out["chemcode"].notna()]
+    # Filter on the dose table's own key. These files carry no chemcode, so
+    # filtering on one silently dropped every row before the join.
+    key = colcfg.get("dose_join_key", "idnum")
+    if key in out.columns:
+        return out[out[key].notna()]
+    return out
 
 
 def attach_dose(
     experiments: pd.DataFrame,
     dose: pd.DataFrame,
     *,
+    join_key: str = "idnum",
     man: StageManifest,
 ) -> pd.DataFrame:
-    """Attach dose/incidence detail on the documented key set.
+    """Attach dose and tumour-incidence detail on the experiment identifier.
 
-    The key is chemcode plus whichever of species, sex, strain, exposure_route
-    and target_organ are present in BOTH tables. A dose group that matches more
-    than one experiment, or none, is left unattached and counted. Nothing is
-    matched by row order.
+    CPDB's dose tables carry no chemcode. Each row is one dose group belonging
+    to the experiment named by `idnum`, with `order` giving its position in the
+    dose series. So the join is idnum -> experiment.idnum: exact, one-to-many,
+    and needing no heuristics.
+
+    Dose groups are emitted in `order`, not in file order, so the dose series
+    and the matching incidence series read low-to-high and line up with each
+    other.
     """
     if dose.empty:
         return experiments
-
-    candidate_keys = ["chemcode", "species", "sex", "strain", "exposure_route", "target_organ"]
-    keys = [
-        k
-        for k in candidate_keys
-        if k in experiments.columns
-        and k in dose.columns
-        and dose[k].notna().any()
-        and experiments[k].notna().any()
-    ]
-    if "chemcode" not in keys:
-        man.warn("dose table has no usable chemcode; dose detail not attached")
+    if join_key not in experiments.columns or join_key not in dose.columns:
+        man.warn(
+            f"dose detail not attached: '{join_key}' missing from "
+            f"{'experiments' if join_key not in experiments.columns else 'dose table'}"
+        )
         return experiments
 
-    LOG.info("attaching dose detail on key set: %s", keys)
+    usable = dose[dose[join_key].notna()].copy()
+    if usable.empty:
+        man.warn(f"every dose row has a null {join_key}; dose detail not attached")
+        return experiments
 
-    # Group dose rows by the key set, keeping a compact summary per group.
-    grouped = dose.groupby(keys, dropna=False)
-    summary: dict[tuple, dict] = {}
-    for key_vals, grp in grouped:
-        key_tuple = key_vals if isinstance(key_vals, tuple) else (key_vals,)
+    if "dose_order" in usable.columns:
+        usable["_order"] = pd.to_numeric(usable["dose_order"], errors="coerce")
+        usable = usable.sort_values([join_key, "_order"], na_position="last")
+
+    summary: dict[str, dict] = {}
+    for key, grp in usable.groupby(join_key, sort=False):
         treated = pd.to_numeric(grp.get("n_treated"), errors="coerce")
         tumour = pd.to_numeric(grp.get("n_with_tumor"), errors="coerce")
         levels = pd.to_numeric(grp.get("dose_level"), errors="coerce")
+
         incidence = None
         if treated is not None and tumour is not None:
             pairs = [
@@ -270,61 +297,55 @@ def attach_dose(
             incidence = "; ".join(pairs) if pairs else None
         dose_resp = None
         if levels is not None:
-            vals = [f"{v:g}" for v in levels.dropna()]
+            vals = [f"{v:g}" for v in levels if pd.notna(v)]
             dose_resp = "; ".join(vals) if vals else None
-        summary[key_tuple] = {
+
+        summary[str(key)] = {
             "tumor_incidence": incidence,
             "dose_response": dose_resp,
-            "n_dose_rows": len(grp),
+            "n_dose_groups": int(len(grp)),
         }
 
-    exp_keys = list(experiments[keys].itertuples(index=False, name=None))
-    # Count how many experiments claim each key, so an ambiguous attachment is
-    # detected rather than silently duplicated onto several records.
-    key_counts: dict[tuple, int] = {}
-    for k in exp_keys:
-        key_counts[k] = key_counts.get(k, 0) + 1
-
-    attached = 0
-    ambiguous = 0
-    unmatched_groups = set(summary) - set(key_counts)
-
-    incidence_col: list[str | None] = []
-    dose_col: list[str | None] = []
-    for k in exp_keys:
-        info = summary.get(k)
-        if info is None:
-            incidence_col.append(None)
-            dose_col.append(None)
-        elif key_counts[k] > 1:
-            # The key set does not uniquely identify this experiment.
-            ambiguous += 1
-            incidence_col.append(None)
-            dose_col.append(None)
-        else:
-            attached += 1
-            incidence_col.append(info["tumor_incidence"])
-            dose_col.append(info["dose_response"])
-
     experiments = experiments.copy()
-    experiments["tumor_incidence"] = incidence_col
-    experiments["dose_response"] = dose_col
+    keys = experiments[join_key].map(lambda v: None if pd.isna(v) else str(v))
+    experiments["tumor_incidence"] = keys.map(
+        lambda k: summary.get(k, {}).get("tumor_incidence") if k else None
+    )
+    experiments["dose_response"] = keys.map(
+        lambda k: summary.get(k, {}).get("dose_response") if k else None
+    )
+    experiments["n_dose_groups"] = keys.map(
+        lambda k: summary.get(k, {}).get("n_dose_groups") if k else None
+    )
 
-    man.counts.setdefault("dose_attachment", {})
+    attached = int(experiments["dose_response"].notna().sum())
+    orphan_groups = set(summary) - set(k for k in keys if k)
+    duplicate_ids = int(experiments[join_key].duplicated().sum())
+
     man.counts["dose_attachment"] = {
-        "key_set": keys,
+        "join_key": join_key,
         "experiments_with_dose_detail": attached,
-        "experiments_ambiguous_key_left_unattached": ambiguous,
-        "dose_groups_with_no_matching_experiment": len(unmatched_groups),
+        "experiments_without_dose_detail": int(len(experiments) - attached),
+        "dose_groups_with_no_matching_experiment": len(orphan_groups),
+        "distinct_experiments_in_dose_table": len(summary),
     }
-    if ambiguous:
+    if duplicate_ids:
+        # idnum is supposed to identify an experiment uniquely. If it does not,
+        # the same dose series is being attached to several records and the
+        # assumption behind this join is wrong.
         man.warn(
-            f"{ambiguous} experiment(s) share a dose key with another record; "
-            f"dose detail left unattached rather than duplicated"
+            f"{duplicate_ids} experiment record(s) share an {join_key}, which "
+            f"should be unique; dose detail is attached to each of them"
         )
-    if unmatched_groups:
+    if orphan_groups:
         man.warn(
-            f"{len(unmatched_groups)} dose group(s) matched no experiment record"
+            f"{len(orphan_groups)} dose group(s) reference an {join_key} with "
+            f"no matching experiment record"
+        )
+    if attached == 0:
+        man.warn(
+            f"no experiment matched any dose group on {join_key}; check that "
+            f"the two files come from the same CPDB release"
         )
     return experiments
 
@@ -418,7 +439,12 @@ def main(argv: list[str] | None = None) -> int:
             man.add_input(path, file_key=key)
             dose_frames.append(parse_dose(path, colcfg, man))
     if dose_frames:
-        experiments = attach_dose(experiments, pd.concat(dose_frames, ignore_index=True), man=man)
+        experiments = attach_dose(
+            experiments,
+            pd.concat(dose_frames, ignore_index=True),
+            join_key=colcfg.get("dose_join_key", "idnum"),
+            man=man,
+        )
     else:
         man.warn("no dose/incidence tables present; dose detail unavailable")
 

@@ -179,32 +179,58 @@ def main() -> int:
 
     # Split experiments between the NCI/NTP and literature files, so the
     # concat path and per-source reporting are both exercised.
+    # Headers match the real CPDB distribution, verified against the live
+    # files with scripts/check_columns.py. The earlier fixture used invented
+    # names (and a chemcode in the dose tables, which CPDB does not have), so
+    # the tests passed against a schema that did not exist.
     ncintp_rows, lit_rows = [], []
     for i, (code, sp, sex, strain, route, assessment) in enumerate(EXPERIMENTS):
-        td50 = f"{(i % 17) * 3.5 + 1.2:.2f}" if assessment.lower().startswith("clear") else "."
-        row = [code, sp, sex, strain, route, "104", "24", "liver" if i % 3 == 0 else "lung",
-               "adenoma" if i % 2 == 0 else "carcinoma", td50, assessment, f"REF{i:04d}", ""]
+        clear = assessment.lower().startswith("clear")
+        td50 = f"{(i % 17) * 3.5 + 1.2:.2f}" if clear else "."
+        idnum = f"{1000 + i}"
+        row = [
+            idnum, code, sp, sex, strain, route,
+            "104", "24",                                   # xprtime, xpotime
+            "liver" if i % 3 == 0 else "lung",             # tissue
+            "adenoma" if i % 2 == 0 else "carcinoma",      # tumor
+            td50,
+            f"{(i % 17) * 2.1 + 0.6:.2f}" if clear else ".",   # lc
+            f"{(i % 17) * 5.4 + 2.8:.2f}" if clear else ".",   # uc
+            "0.001" if clear else ".",                     # pval
+            "50", "2",                                     # ctotal, ctumors
+            "3",                                           # ndoses
+            "",                                            # inad
+            assessment,
+            f"{2000 + i}",                                 # papernum
+            "",
+        ]
         (ncintp_rows if i % 2 == 0 else lit_rows).append(row)
 
-    exp_header = ["chemcode", "species", "sex", "strain", "route", "dur", "xpo",
-                  "site", "tumor_type", "td50", "opinion", "refnum", "notes"]
+    exp_header = [
+        "idnum", "chemcode", "species", "sex", "strain", "route",
+        "xprtime", "xpotime", "tissue", "tumor", "td50", "lc", "uc", "pval",
+        "ctotal", "ctumors", "ndoses", "inad", "opinion", "papernum", "notes",
+    ]
     write_tab(out / "cpdb.ncintp.tab", exp_header, ncintp_rows)
     write_tab(out / "cpdb.lit.tab", exp_header, lit_rows)
 
-    chem_rows = [[c, cas, name] for c, cas, name, _ in CHEMICALS]
-    chem_rows.append([UNRESOLVED[0], UNRESOLVED[1], UNRESOLVED[2]])
-    write_tab(out / "cpdb.chemname.tab", ["chemcode", "casno", "chemname"], chem_rows)
+    chem_rows = [[c, cas, name, str(i)] for i, (c, cas, name, _) in enumerate(CHEMICALS)]
+    chem_rows.append([UNRESOLVED[0], UNRESOLVED[1], UNRESOLVED[2], str(len(CHEMICALS))])
+    write_tab(out / "cpdb.chemname.tab", ["chemcode", "cas", "name", "sortordr"], chem_rows)
 
-    # Dose tables keyed on chemcode + species + sex + strain + route.
+    # Dose tables carry NO chemcode. One row per dose group, linked to the
+    # experiment by idnum, with `order` giving its place in the dose series.
+    # Written out of order on purpose, so the parser is shown to sort by
+    # `order` rather than trusting file order.
     dose_rows = []
-    for i, (code, sp, sex, strain, route, _) in enumerate(EXPERIMENTS):
-        organ = "liver" if i % 3 == 0 else "lung"
-        for level, (treated, tumour) in enumerate([(50, 2), (50, 8), (50, 19)]):
-            dose_rows.append([code, sp, sex, strain, route, organ,
-                              f"{(level + 1) * 25}", str(treated), str(tumour + level)])
+    for i in range(len(EXPERIMENTS)):
+        idnum = f"{1000 + i}"
+        groups = [(1, 25, 50, 2), (2, 50, 50, 8), (3, 100, 50, 19)]
+        for order, dose, total, tumors in reversed(groups):
+            dose_rows.append([idnum, str(order), str(dose), str(total), str(tumors)])
     write_tab(
         out / "cpdb.ncntdose.tab",
-        ["chemcode", "species", "sex", "strain", "route", "site", "dose", "ntreated", "ntumor"],
+        ["idnum", "order", "dose", "total", "tumors"],
         dose_rows,
     )
 

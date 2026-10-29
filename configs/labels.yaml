@@ -15,7 +15,7 @@
 # absence. Rows labelled null are excluded from ordinary binary loss and
 # retained for analysis.
 
-label_policy_version: v1.1.0
+label_policy_version: v1.2.0
 
 endpoint_definition: >
   Evidence of carcinogenic activity in long-term rodent bioassays, determined
@@ -29,6 +29,31 @@ endpoint_definition: >
 # Assessment strings are matched case-insensitively after whitespace collapse.
 # An assessment that matches nothing here becomes null and is counted in the
 # audit report as `unmapped_assessment`. It is never defaulted to 0.
+# CPDB encodes the author's opinion as a single character in the `opinion`
+# column, not as the NTP sentences. A real CPDB record shows values of
+# '+', '-', '*' and 'Z'. The NTP phrasings below are kept because the
+# NCI/NTP technical reports use them and other sources may too.
+#
+# '+' and '-' are included on the evidence of the published chemical pages.
+# '*' and 'Z' are DELIBERATELY NOT MAPPED: their meaning is not documented in
+# any source reachable here, and guessing would either invent carcinogens or
+# invent clean compounds. They are left to trip the unmapped check below,
+# which fails the run and names them, so they get resolved from the CPDB
+# documentation rather than assumed.
+#
+# Confirm the full code set in Tab_Separated_CPDB.pdf before a production run:
+#   https://ftp.nlm.nih.gov/projects/SISFTP/CPDB/Documentation/
+
+# A vocabulary mismatch used to shrink the dataset silently: unmapped values
+# became null, compounds lost their labels, and the only symptom was a tiny
+# benchmark. This makes it loud instead, like the column mapper.
+unmapped_assessment_policy:
+  # Fail the run when more than this fraction of records carry an assessment
+  # that matches no rule. Set to 1.0 to disable.
+  fail_above_fraction: 0.25
+  # Values seen this many times or more are listed in the failure message.
+  report_min_count: 1
+
 endpoints:
 
   # Primary: clearly positive versus clearly negative only.
@@ -43,12 +68,14 @@ endpoints:
       - positive
       - carcinogenic
       - p
+      - "+"          # CPDB author's opinion: positive
     negative:
       - no evidence of carcinogenic activity
       - no evidence
       - negative
       - not carcinogenic
       - n
+      - "-"          # CPDB author's opinion: negative
     unresolved:
       - some evidence of carcinogenic activity
       - some evidence
@@ -73,12 +100,14 @@ endpoints:
       - positive
       - carcinogenic
       - p
+      - "+"          # CPDB author's opinion: positive
     negative:
       - no evidence of carcinogenic activity
       - no evidence
       - negative
       - not carcinogenic
       - n
+      - "-"          # CPDB author's opinion: negative
     unresolved:
       - equivocal evidence of carcinogenic activity
       - equivocal

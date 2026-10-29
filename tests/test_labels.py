@@ -16,9 +16,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.common import load_config  # noqa: E402
 from src.curation.harmonize_labels import (  # noqa: E402
+    VocabularyMismatch,
     aggregate_to_compounds,
     build_assessment_map,
+    check_unmapped,
     confidence_for,
+    label_records,
     normalise_assessment,
 )
 
@@ -206,6 +209,112 @@ class TestPolicyVersioning:
         text = LAB_CFG["endpoint_definition"].lower()
         assert "rodent" in text
         assert "not a claim about human" in text
+
+
+class _Manifest:
+    """Minimal stand-in for the real manifest; collects warnings."""
+
+    def __init__(self) -> None:
+        self.warnings: list[str] = []
+
+    def warn(self, message: str) -> None:
+        self.warnings.append(message)
+
+
+class TestVocabularyMismatch:
+    """A vocabulary the policy does not recognise must stop the run.
+
+    This is the regression guard for the failure mode that cost the most
+    time on this project: unmapped assessments became null, the compounds
+    carrying them lost their labels, and the only visible symptom was a
+    benchmark built from eleven test compounds. Silence is the bug.
+    """
+
+    ENDPOINT = "primary"
+
+    def _labels(self, values: list[object]):
+        experiments = pd.DataFrame({"author_assessment": values})
+        labels, _ = label_records(
+            experiments,
+            self.ENDPOINT,
+            LAB_CFG["endpoints"][self.ENDPOINT],
+            man=_Manifest(),
+        )
+        return experiments, labels
+
+    @property
+    def policy(self) -> dict:
+        policy = LAB_CFG.get("unmapped_assessment_policy")
+        assert policy is not None, (
+            "labels.yaml must define unmapped_assessment_policy; without it "
+            "an unrecognised vocabulary silently empties the dataset."
+        )
+        return policy
+
+    def test_cpdb_single_character_codes_are_mapped(self):
+        """The real CPDB opinion codes must not be an unmapped vocabulary."""
+        for endpoint, cfg in LAB_CFG["endpoints"].items():
+            mapping = build_assessment_map(cfg)
+            assert mapping.get("+") == 1, (
+                f"endpoint {endpoint}: CPDB encodes a positive author opinion "
+                f"as '+'; it must map to 1."
+            )
+            assert mapping.get("-") == 0, (
+                f"endpoint {endpoint}: CPDB encodes a negative author opinion "
+                f"as '-'; it must map to 0."
+            )
+
+    def test_unrecognised_vocabulary_raises(self):
+        experiments, labels = self._labels(["NP"] * 30 + ["EE"] * 10)
+        with pytest.raises(VocabularyMismatch) as exc:
+            check_unmapped(
+                experiments,
+                labels,
+                endpoint_name=self.ENDPOINT,
+                policy=self.policy,
+            )
+        message = str(exc.value)
+        # The error must name the offending values and their counts, or it
+        # is no more actionable than the silent failure it replaces.
+        assert "np" in message.lower()
+        assert "30" in message
+        assert "configs/labels.yaml" in message
+
+    def test_known_vocabulary_with_few_unmapped_passes(self):
+        """'*' and 'Z' are undocumented and deliberately unmapped.
+
+        They must not abort a run in which the documented codes dominate,
+        otherwise the check is unusable on real CPDB data.
+        """
+        experiments, labels = self._labels(
+            ["+"] * 40 + ["-"] * 40 + ["*"] * 10 + ["Z"] * 5
+        )
+        check_unmapped(
+            experiments,
+            labels,
+            endpoint_name=self.ENDPOINT,
+            policy=self.policy,
+        )
+
+    def test_absent_assessment_is_not_a_mismatch(self):
+        """No assessment is missing data, not a vocabulary problem."""
+        experiments, labels = self._labels(["+"] * 5 + [None] * 95)
+        check_unmapped(
+            experiments,
+            labels,
+            endpoint_name=self.ENDPOINT,
+            policy=self.policy,
+        )
+
+    def test_threshold_of_one_disables_the_check(self):
+        """An explicit escape hatch must exist and must work."""
+        experiments, labels = self._labels(["NP"] * 50)
+        check_unmapped(
+            experiments,
+            labels,
+            endpoint_name=self.ENDPOINT,
+            policy={"fail_above_fraction": 1.0},
+        )
 
 
 if __name__ == "__main__":

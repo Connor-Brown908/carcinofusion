@@ -111,6 +111,78 @@ def label_records(
     return pd.Series(labels, index=experiments.index, dtype="object"), unmapped
 
 
+class VocabularyMismatch(RuntimeError):
+    """Too many assessments matched no rule in the label policy."""
+
+
+def check_unmapped(
+    experiments: pd.DataFrame,
+    labels: pd.Series,
+    *,
+    endpoint_name: str,
+    policy: dict,
+) -> None:
+    """Fail the run when the policy does not recognise the data's vocabulary.
+
+    An unmapped assessment becomes null, which is the right per-record
+    behaviour but a terrible failure mode in bulk: the compound loses its
+    label, drops out of the training set, and the only symptom is a dataset
+    that came out small. That is how a CPDB run reached the benchmark with
+    eleven test compounds.
+
+    The column mapper already refuses to guess and names the column it could
+    not resolve. This does the same for values.
+    """
+    threshold = float(policy.get("fail_above_fraction", 1.0))
+    if threshold >= 1.0:
+        return
+
+    assessed = experiments["author_assessment"].map(normalise_assessment)
+    has_assessment = assessed.notna()
+    n_assessed = int(has_assessment.sum())
+    if n_assessed == 0:
+        return
+
+    # Only records that HAVE an assessment but got no label are a vocabulary
+    # problem; a record with no assessment is missing data, not a mismatch.
+    unmapped_mask = has_assessment & labels.isna()
+    n_unmapped = int(unmapped_mask.sum())
+    fraction = n_unmapped / n_assessed
+    if fraction <= threshold:
+        return
+
+    counts = (
+        assessed[unmapped_mask]
+        .value_counts()
+        .head(25)
+    )
+    min_count = int(policy.get("report_min_count", 1))
+    lines = [
+        f"    {str(value)[:48]:<48} {int(n):>7,}"
+        for value, n in counts.items()
+        if n >= min_count
+    ]
+
+    raise VocabularyMismatch(
+        f"endpoint '{endpoint_name}': {n_unmapped:,} of {n_assessed:,} records "
+        f"({fraction:.1%}) carry an assessment that matches no rule in "
+        f"configs/labels.yaml, so they would be labelled null and their "
+        f"compounds would drop out of the dataset.\n\n"
+        f"  Unmapped values, most frequent first:\n\n"
+        + "\n".join(lines)
+        + "\n\n"
+        f"  Add each to the positive, negative or unresolved list for this\n"
+        f"  endpoint in configs/labels.yaml, then bump label_policy_version.\n"
+        f"  CPDB's codes are defined in Tab_Separated_CPDB.pdf:\n"
+        f"    https://ftp.nlm.nih.gov/projects/SISFTP/CPDB/Documentation/\n\n"
+        f"  Do not guess. Mapping a code to the wrong class invents carcinogens\n"
+        f"  or invents clean compounds, and nothing downstream will notice.\n\n"
+        f"  To proceed anyway, set unmapped_assessment_policy.fail_above_fraction\n"
+        f"  to 1.0 in configs/labels.yaml — but the dataset will be a fraction\n"
+        f"  of its real size."
+    )
+
+
 def confidence_for(n_records: int, confidence_cfg: dict) -> str:
     """Label confidence band from the number of agreeing eligible records."""
     for band in ("high", "medium", "low"):
@@ -228,6 +300,14 @@ def main(argv: list[str] | None = None) -> int:
             experiments, name, lab_cfg["endpoints"][name], man=man
         )
         all_unmapped |= unmapped
+        # Refuse to build a dataset from a vocabulary the policy does not
+        # recognise. Checked per endpoint, before anything is written.
+        check_unmapped(
+            experiments,
+            labeled[col],
+            endpoint_name=name,
+            policy=lab_cfg.get("unmapped_assessment_policy", {}),
+        )
         counts = labeled[col].value_counts(dropna=False).to_dict()
         LOG.info("endpoint %s record labels: %s", name, counts)
         man.counts[f"record_labels_{name}"] = {

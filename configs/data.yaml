@@ -11,7 +11,10 @@
 # compound needs two corroborating negative bioassays before it is labelled
 # negative. A frozen dataset is immutable, so the change produces a new
 # version rather than editing v1.
-dataset_version: v2
+# v3: label policy v1.2.0 added the CPDB single-character author-opinion
+# codes ('+', '-') to the record-level vocabulary and made an unrecognised
+# vocabulary a hard failure instead of a silent null.
+dataset_version: v3
 
 sources:
   cpdb:

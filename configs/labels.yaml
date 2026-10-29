@@ -15,7 +15,7 @@
 # absence. Rows labelled null are excluded from ordinary binary loss and
 # retained for analysis.
 
-label_policy_version: v1.3.0
+label_policy_version: v1.3.1
 
 endpoint_definition: >
   Evidence of carcinogenic activity in long-term rodent bioassays, determined

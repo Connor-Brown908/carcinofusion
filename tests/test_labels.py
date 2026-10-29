@@ -15,6 +15,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.common import load_config  # noqa: E402
+from src.ingestion.parse_cpdb import (  # noqa: E402
+    _null_tokens_resolver,
+    check_null_tokens_against_labels,
+)
 from src.curation.harmonize_labels import (  # noqa: E402
     VocabularyMismatch,
     aggregate_to_compounds,
@@ -417,6 +421,69 @@ class TestVocabularyMismatch:
             endpoint_name=self.ENDPOINT,
             policy={"fail_above_fraction": 1.0},
         )
+
+
+class TestParserDoesNotPreemptThePolicy:
+    """The parser must not null a value the label policy calls a code.
+
+    This is the regression guard for the most expensive bug in the project.
+    configs/cpdb_columns.yaml listed '-' as a global no-value token, and the
+    parser runs before the label policy, so every negative author opinion in
+    CPDB — 6,036 records, a quarter of the database — became null at stage 2.
+    Nothing downstream could see it: the vocabulary check had no unmapped
+    value to report, the audit found no conflicts, and the dataset emerged
+    with 700 positives and zero negatives.
+    """
+
+    def test_the_assessment_column_keeps_every_label_code(self):
+        colcfg = load_config("cpdb_columns")
+        tokens = {
+            str(t).strip().lower()
+            for t in _null_tokens_resolver(colcfg)("author_assessment")
+        }
+        for endpoint, cfg in LAB_CFG["endpoints"].items():
+            for bucket in ("positive", "negative", "unresolved"):
+                for term in cfg.get(bucket, []):
+                    token = str(term).strip().lower()
+                    assert token not in tokens, (
+                        f"{token!r} is a {bucket} code for endpoint "
+                        f"{endpoint} but the parser nulls it before the "
+                        f"label policy runs, so those records lose their "
+                        f"label with no unmapped value reported."
+                    )
+
+    def test_the_minus_code_specifically_survives_parsing(self):
+        """Named explicitly, because this one cost a positives-only dataset."""
+        colcfg = load_config("cpdb_columns")
+        tokens = _null_tokens_resolver(colcfg)("author_assessment")
+        assert "-" not in tokens
+        assert "" in tokens, "the empty string is still no-value"
+
+    def test_other_columns_still_treat_a_dash_as_no_value(self):
+        """The override is scoped: a bare '-' in a numeric column is blank."""
+        colcfg = load_config("cpdb_columns")
+        resolver = _null_tokens_resolver(colcfg)
+        assert "-" in resolver("td50")
+        assert "-" in resolver("target_organ")
+
+    def test_the_cross_config_guard_fires_on_a_collision(self):
+        colcfg = load_config("cpdb_columns")
+        reintroduced = {
+            k: v for k, v in colcfg.items() if k != "null_tokens_by_column"
+        }
+        with pytest.raises(ValueError, match="contradict each other"):
+            check_null_tokens_against_labels(reintroduced, LAB_CFG)
+
+    def test_the_guard_names_the_offending_token_and_the_remedy(self):
+        colcfg = load_config("cpdb_columns")
+        reintroduced = {
+            k: v for k, v in colcfg.items() if k != "null_tokens_by_column"
+        }
+        with pytest.raises(ValueError) as exc:
+            check_null_tokens_against_labels(reintroduced, LAB_CFG)
+        message = str(exc.value)
+        assert "'-'" in message
+        assert "null_tokens_by_column" in message
 
 
 if __name__ == "__main__":

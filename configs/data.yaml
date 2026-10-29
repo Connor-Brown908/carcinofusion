@@ -19,7 +19,11 @@
 # clear evidence, 19.6% of the NCI/NTP file), moving 'p' (some evidence) out
 # of the primary positives, dropping the invented 'n', and declaring '0' as
 # the blank-opinion sentinel rather than a code.
-dataset_version: v4
+# v5: the parser no longer nulls '-' in the author_assessment column. The
+# global null_tokens list treated it as no-value, destroying every negative
+# opinion (6,036 records) before the label policy ran and producing a
+# positives-only dataset.
+dataset_version: v5
 
 sources:
   cpdb:

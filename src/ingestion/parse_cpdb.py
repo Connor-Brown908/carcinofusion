@@ -76,6 +76,76 @@ EXPERIMENT_COLUMNS = [
 ]
 
 
+def _null_tokens_resolver(colcfg: dict):
+    """Return a function giving the no-value tokens for one canonical column.
+
+    Falls back to the global list. A column listed in
+    `null_tokens_by_column` overrides it entirely, which is how a column
+    whose vocabulary uses a glyph the global list calls blank keeps its
+    values.
+    """
+    global_tokens = list(colcfg["null_tokens"])
+    overrides = colcfg.get("null_tokens_by_column") or {}
+
+    def tokens_for(canonical: str) -> list[str]:
+        if canonical in overrides:
+            return list(overrides[canonical] or [])
+        return global_tokens
+
+    return tokens_for
+
+
+def check_null_tokens_against_labels(colcfg: dict, labcfg: dict) -> None:
+    """Refuse to parse if a no-value token is also a label code.
+
+    This is the general form of a bug that cost this project a week. The
+    parser nulls tokens before the label policy runs, so a glyph that is
+    blank globally and meaningful in the assessment column is destroyed
+    upstream of every check the policy makes: the audit sees no unmapped
+    values, the vocabulary guard sees nothing to complain about, and the
+    dataset simply comes out one class short.
+
+    Checking the two configs against each other catches the whole class at
+    the only point where both are in hand.
+    """
+    tokens_for = _null_tokens_resolver(colcfg)
+    assessment_nulls = {str(t).strip().lower() for t in tokens_for("author_assessment")}
+
+    codes: dict[str, list[str]] = {}
+    for endpoint, cfg in (labcfg.get("endpoints") or {}).items():
+        for bucket in ("positive", "negative", "unresolved"):
+            for term in cfg.get(bucket, []):
+                token = str(term).strip().lower()
+                if token and token in assessment_nulls:
+                    codes.setdefault(token, []).append(f"{endpoint}/{bucket}")
+
+    if not codes:
+        return
+
+    lines = "\n".join(
+        f"    {token!r:<12} is a label code in {', '.join(where)}"
+        for token, where in sorted(codes.items())
+    )
+    raise ValueError(
+        "configs/cpdb_columns.yaml and configs/labels.yaml contradict each "
+        "other on the author_assessment column:\n\n"
+        f"{lines}\n\n"
+        "  The parser nulls these tokens before the label policy sees them, "
+        "so every\n"
+        "  record carrying one loses its label and its compound drops out, "
+        "with no\n"
+        "  unmapped value for the vocabulary check to report. CPDB writes a "
+        "negative\n"
+        "  author opinion as '-', which is exactly this collision.\n\n"
+        "  Fix it by overriding the column in cpdb_columns.yaml:\n\n"
+        "    null_tokens_by_column:\n"
+        "      author_assessment: ['']\n\n"
+        "  The label policy's own missing_assessment_values decides what "
+        "counts as\n"
+        "  absent evidence. The parser's job is to preserve the raw value."
+    )
+
+
 def read_tab(path: Path) -> pd.DataFrame:
     """Read a CPDB tab-separated file as raw strings.
 
@@ -123,6 +193,12 @@ def parse_experiment_table(
     LOG.info("%s: %d rows, mapped columns %s", path.name, len(raw), aliases)
 
     nulls = colcfg["null_tokens"]
+    # Per-column overrides. A token can be a blank in one column and a
+    # meaningful code in another: CPDB writes a negative author opinion as
+    # '-', which the global list treats as no-value. One list applied to
+    # every column silently destroyed 6,036 negative records — a quarter of
+    # the database — leaving a positives-only dataset as the only symptom.
+    nulls_for = _null_tokens_resolver(colcfg)
     vocab = colcfg["vocabularies"]
     out = pd.DataFrame(index=raw.index)
 
@@ -133,7 +209,10 @@ def parse_experiment_table(
     out["source_record_id"] = [f"{path.name}:{i}" for i in range(len(raw))]
 
     def clean(canonical: str) -> pd.Series:
-        return _series(raw, resolved, canonical).map(lambda v: normalise_null(v, nulls))
+        tokens = nulls_for(canonical)
+        return _series(raw, resolved, canonical).map(
+            lambda v: normalise_null(v, tokens)
+        )
 
     out["idnum"] = clean("idnum")
     out["chemcode"] = clean("chemcode")
@@ -359,6 +438,9 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging()
     cfg = load_config("data")
     colcfg = load_config("cpdb_columns")
+    # Cross-check the two configs before reading a byte. A no-value token that
+    # is also a label code destroys records upstream of every later guard.
+    check_null_tokens_against_labels(colcfg, load_config("labels"))
     src = cfg["sources"]["cpdb"]
     raw_dir = resolve_path(args.raw_dir or src["raw_dir"])
     interim = resolve_path(cfg["paths"]["interim"])

@@ -123,3 +123,22 @@ vocabularies:
 # Values that mean "no value recorded". Normalised to null, never to 0 or to a
 # negative finding.
 null_tokens: ['', '.', 'NA', 'N/A', 'NULL', 'null', '-', 'nd', 'ND', 'unknown']
+
+# Per-column overrides of null_tokens.
+#
+# A glyph can be a blank in one column and a code in another. CPDB writes a
+# negative author opinion as '-', which the global list above calls no-value.
+# Because the parser runs before the label policy, that nulled every negative
+# record upstream of every check: 6,036 records, a quarter of the database,
+# gone with no unmapped value for the vocabulary guard to report and a
+# positives-only dataset as the only symptom.
+#
+# The assessment column therefore keeps everything but the empty string. What
+# counts as absent evidence is decided by missing_assessment_values in
+# configs/labels.yaml, where the reasoning lives and is versioned. The
+# parser's job is to preserve the raw value, not to interpret it.
+#
+# check_null_tokens_against_labels() enforces this: parsing fails if a token
+# here is also a label code.
+null_tokens_by_column:
+  author_assessment: ['']

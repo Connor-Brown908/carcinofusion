@@ -15,7 +15,7 @@
 # absence. Rows labelled null are excluded from ordinary binary loss and
 # retained for analysis.
 
-label_policy_version: v1.2.0
+label_policy_version: v1.3.0
 
 endpoint_definition: >
   Evidence of carcinogenic activity in long-term rodent bioassays, determined
@@ -29,20 +29,76 @@ endpoint_definition: >
 # Assessment strings are matched case-insensitively after whitespace collapse.
 # An assessment that matches nothing here becomes null and is counted in the
 # audit report as `unmapped_assessment`. It is never defaulted to 0.
-# CPDB encodes the author's opinion as a single character in the `opinion`
-# column, not as the NTP sentences. A real CPDB record shows values of
-# '+', '-', '*' and 'Z'. The NTP phrasings below are kept because the
-# NCI/NTP technical reports use them and other sources may too.
 #
-# '+' and '-' are included on the evidence of the published chemical pages.
-# '*' and 'Z' are DELIBERATELY NOT MAPPED: their meaning is not documented in
-# any source reachable here, and guessing would either invent carcinogens or
-# invent clean compounds. They are left to trip the unmapped check below,
-# which fails the run and names them, so they get resolved from the CPDB
-# documentation rather than assumed.
+# ---------------------------------------------------------------------------
+# PROVENANCE OF THIS VOCABULARY
+# ---------------------------------------------------------------------------
+# Every code below is quoted from CPDB's own author's-opinion appendix:
+#   https://files.toxplanet.com/cpdb/pdfs/opinion.pdf
+# This file previously carried codes I had inferred from a rendered chemical
+# page. Two of those inferences were wrong and one omission was severe:
 #
-# Confirm the full code set in Tab_Separated_CPDB.pdf before a production run:
-#   https://ftp.nlm.nih.gov/projects/SISFTP/CPDB/Documentation/
+#   - 'c' was absent entirely. It is the NCI/NTP file's PRIMARY positive code
+#     and covers 1,720 of 8,796 records (19.6%) in cpdb.ncintp.tab. Nearly
+#     every NCI/NTP positive was therefore being dropped. This is the main
+#     reason a benchmark built from ~1,500 chemicals reached 11 test
+#     compounds.
+#   - 'p' was listed as POSITIVE. It is NTP's "some evidence of carcinogenic
+#     activity", explicitly weaker than clear evidence, so under this file's
+#     own primary-endpoint definition it belongs in unresolved. Leaving it
+#     positive would have labelled 200 some-evidence records as clear
+#     positives.
+#   - 'n' was listed as a negative code. No such opinion code exists.
+#
+# The appendix scopes codes by source: '+' and '-' for the general
+# literature, and 'a', 'c', 'e', 'p', 'i' for NCI/NTP evaluations. No code
+# carries two meanings across the two files, so one merged vocabulary is
+# unambiguous and the parser needs no per-source branching.
+#
+# Verbatim definitions, for audit:
+#   +  "Author in general literature evaluated the site as positive."
+#   -  "In the general literature author evaluated the site as negative."
+#   c  "The NCI evaluation is 'carcinogenic' or the NTP evaluation is 'clear
+#       evidence of carcinogenic activity'."
+#   p  "NTP evaluation is 'some evidence of carcinogenic activity' ... in
+#       which the strength of the response is less than that required for
+#       clear evidence."
+#   e  "NTP evaluation is 'equivocal evidence of carcinogenic activity',
+#       i.e. ... a marginal increase of neoplasms that may be chemically
+#       related."
+#   a  "For NCI Technical Reports the 'a' opinion corresponds to an
+#       evaluation that tumors were 'associated' with compound
+#       administration. The 'a' opinion generally corresponds to an
+#       NTP-reassigned level of 'equivocal'."
+#   i  "NTP evaluation is inadequate, i.e. studies that, because of major
+#       qualitative or quantitative limitations, cannot be interpreted as
+#       valid for showing either the presence or absence of carcinogenic
+#       activity."
+#
+# ---------------------------------------------------------------------------
+# ONE DEPARTURE FROM THE APPENDIX, DELIBERATE AND FLAGGED
+# ---------------------------------------------------------------------------
+# The appendix scopes '-' to the general literature, yet cpdb.ncintp.tab
+# contains 994 records (11.3%) whose opinion is '-'. The glyph's meaning is
+# not in doubt, and the alternative — treating those as missing — would leave
+# the NCI/NTP subset almost entirely positive and inject severe label bias,
+# which is a worse error than accepting the documented scoping is loose.
+# So '-' maps to 0 in both files. The audit report counts NCI/NTP negatives
+# separately so this decision stays visible and can be revisited.
+
+# Values meaning "no opinion was stated", which is missing data rather than an
+# unrecognised code. The appendix defines a Blank opinion as "For NCI/NTP and
+# general literature: a site for which no opinion is stated" and lists no '0'
+# code at all. The tab-separated distribution renders that blank as '0': the
+# same '0' fills `inad` (97.9%, where 'i' is the only real code) and `notes`
+# (72.1%), i.e. exactly the optional-code columns. Treating it as a code would
+# make a third of the literature file and two thirds of the NCI/NTP file look
+# like a vocabulary gap; treating it as negative would invent clean compounds
+# on a scale that nothing downstream could detect.
+missing_assessment_values:
+  - "0"
+  - "---"
+  - "blank"
 
 # A vocabulary mismatch used to shrink the dataset silently: unmapped values
 # became null, compounds lost their labels, and the only symptom was a tiny
@@ -63,28 +119,29 @@ endpoints:
       activity against clear absence of it. Some-evidence and equivocal
       findings are left unresolved.
     positive:
+      - "+"          # literature: author evaluated the site as positive
+      - "c"          # NCI "carcinogenic" / NTP "clear evidence"
       - clear evidence of carcinogenic activity
       - clear evidence
       - positive
       - carcinogenic
-      - p
-      - "+"          # CPDB author's opinion: positive
     negative:
+      - "-"          # author evaluated the site as negative
       - no evidence of carcinogenic activity
       - no evidence
       - negative
       - not carcinogenic
-      - n
-      - "-"          # CPDB author's opinion: negative
     unresolved:
+      - "p"          # NTP "some evidence": weaker than clear, so not positive
+      - "e"          # NTP "equivocal evidence"
+      - "a"          # NCI "associated"; NTP-reassigned to equivocal
+      - "i"          # NTP "inadequate study"
       - some evidence of carcinogenic activity
       - some evidence
       - equivocal evidence of carcinogenic activity
       - equivocal
-      - e
       - inadequate study
       - inadequate
-      - i
 
   # Sensitivity: some-evidence counted as positive, equivocal still unresolved.
   sensitivity:
@@ -93,28 +150,29 @@ endpoints:
       label definition. Some-evidence results are treated as positive.
       Equivocal findings remain unresolved.
     positive:
+      - "+"          # literature: author evaluated the site as positive
+      - "c"          # NCI "carcinogenic" / NTP "clear evidence"
+      - "p"          # NTP "some evidence": counted positive in this endpoint
       - clear evidence of carcinogenic activity
       - clear evidence
       - some evidence of carcinogenic activity
       - some evidence
       - positive
       - carcinogenic
-      - p
-      - "+"          # CPDB author's opinion: positive
     negative:
+      - "-"          # author evaluated the site as negative
       - no evidence of carcinogenic activity
       - no evidence
       - negative
       - not carcinogenic
-      - n
-      - "-"          # CPDB author's opinion: negative
     unresolved:
+      - "e"          # NTP "equivocal evidence"
+      - "a"          # NCI "associated"; NTP-reassigned to equivocal
+      - "i"          # NTP "inadequate study"
       - equivocal evidence of carcinogenic activity
       - equivocal
-      - e
       - inadequate study
       - inadequate
-      - i
 
 # ---------------------------------------------------------------------------
 # Compound-level aggregation

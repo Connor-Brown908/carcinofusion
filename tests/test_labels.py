@@ -22,6 +22,7 @@ from src.curation.harmonize_labels import (  # noqa: E402
     check_unmapped,
     confidence_for,
     label_records,
+    missing_values_from,
     normalise_assessment,
 )
 
@@ -239,8 +240,35 @@ class TestVocabularyMismatch:
             self.ENDPOINT,
             LAB_CFG["endpoints"][self.ENDPOINT],
             man=_Manifest(),
+            missing_values=missing_values_from(LAB_CFG),
         )
         return experiments, labels
+
+    def test_the_real_cpdb_distribution_is_fully_mapped(self):
+        """The observed distribution of both CPDB experiment tables.
+
+        Counts are from scripts/inspect_values.py on the real files:
+        cpdb.lit.tab (14,207 rows) and cpdb.ncintp.tab (8,796 rows).
+        Nothing in either file may be unmapped.
+        """
+        observed = (
+            ["0"] * 5234 + ["-"] * 5042 + ["+"] * 3931          # cpdb.lit.tab
+            + ["0"] * 5507 + ["c"] * 1720 + ["-"] * 994         # cpdb.ncintp.tab
+            + ["e"] * 269 + ["p"] * 200 + ["a"] * 106
+        )
+        experiments, labels = self._labels(observed)
+        check_unmapped(
+            experiments,
+            labels,
+            endpoint_name=self.ENDPOINT,
+            policy=self.policy,
+            missing_values=missing_values_from(LAB_CFG),
+        )
+        n_pos = int((labels == 1).sum())
+        n_neg = int((labels == 0).sum())
+        # 3,931 '+' and 1,720 'c' positive; 5,042 + 994 '-' negative.
+        assert n_pos == 5651, n_pos
+        assert n_neg == 6036, n_neg
 
     @property
     def policy(self) -> dict:
@@ -251,18 +279,91 @@ class TestVocabularyMismatch:
         )
         return policy
 
-    def test_cpdb_single_character_codes_are_mapped(self):
-        """The real CPDB opinion codes must not be an unmapped vocabulary."""
+    # The authoritative code list, quoted from CPDB's own appendix at
+    # https://files.toxplanet.com/cpdb/pdfs/opinion.pdf
+    #   +  literature: site evaluated positive
+    #   -  site evaluated negative
+    #   c  NCI "carcinogenic" / NTP "clear evidence"
+    #   p  NTP "some evidence"  (weaker than clear)
+    #   e  NTP "equivocal evidence"
+    #   a  NCI "associated"; NTP-reassigned to equivocal
+    #   i  NTP "inadequate study"
+    EXPECTED = {
+        "primary":     {"+": 1, "-": 0, "c": 1,
+                        "p": None, "e": None, "a": None, "i": None},
+        "sensitivity": {"+": 1, "-": 0, "c": 1, "p": 1,
+                        "e": None, "a": None, "i": None},
+    }
+
+    def test_every_documented_opinion_code_maps_as_the_appendix_defines(self):
+        """Lock the vocabulary to the appendix, code by code.
+
+        'c' being absent from this mapping is what reduced a 1,500-chemical
+        database to an 11-compound benchmark: it is the NCI/NTP file's
+        primary positive code, 19.6% of its records.
+        """
+        for endpoint, expected in self.EXPECTED.items():
+            mapping = build_assessment_map(LAB_CFG["endpoints"][endpoint])
+            for code, want in expected.items():
+                assert code in mapping, (
+                    f"endpoint {endpoint}: opinion code {code!r} is documented "
+                    f"in the CPDB appendix but appears in no vocabulary list, "
+                    f"so every record carrying it would lose its label."
+                )
+                assert mapping[code] == want, (
+                    f"endpoint {endpoint}: code {code!r} maps to "
+                    f"{mapping[code]!r}, expected {want!r}."
+                )
+
+    def test_some_evidence_is_not_a_clear_positive(self):
+        """'p' is NTP 'some evidence', explicitly weaker than clear evidence.
+
+        The primary endpoint's own definition sends some-evidence findings to
+        unresolved. Calling them positive there would overstate 200 records.
+        """
+        primary = build_assessment_map(LAB_CFG["endpoints"]["primary"])
+        assert primary["p"] is None
+        sensitivity = build_assessment_map(LAB_CFG["endpoints"]["sensitivity"])
+        assert sensitivity["p"] == 1, (
+            "the sensitivity endpoint exists precisely to count some-evidence "
+            "as positive; if it does not, the two endpoints are identical."
+        )
+
+    def test_no_invented_codes_remain(self):
+        """'n' was an invented negative code. No such opinion code exists."""
+        documented = set("+-cpeai")
         for endpoint, cfg in LAB_CFG["endpoints"].items():
             mapping = build_assessment_map(cfg)
-            assert mapping.get("+") == 1, (
-                f"endpoint {endpoint}: CPDB encodes a positive author opinion "
-                f"as '+'; it must map to 1."
-            )
-            assert mapping.get("-") == 0, (
-                f"endpoint {endpoint}: CPDB encodes a negative author opinion "
-                f"as '-'; it must map to 0."
-            )
+            for code in mapping:
+                if code is None or len(code) > 1:
+                    continue  # the NTP prose phrasings, kept for other sources
+                assert code in documented, (
+                    f"endpoint {endpoint}: {code!r} is a single-character "
+                    f"opinion code that the CPDB appendix does not define. "
+                    f"Mapping an invented code invents evidence."
+                )
+
+    def test_blank_opinion_is_missing_not_a_code(self):
+        """CPDB writes 'no opinion stated' as '0' in the tab files.
+
+        Treated as a code it looks like a vocabulary gap across two thirds of
+        the NCI/NTP file; treated as negative it invents clean compounds.
+        """
+        missing = missing_values_from(LAB_CFG)
+        assert "0" in missing
+        assert normalise_assessment("0", missing_values=missing) is None
+        # It must not also be a label, or the code would be silently voided.
+        for cfg in LAB_CFG["endpoints"].values():
+            for bucket in ("positive", "negative", "unresolved"):
+                assert "0" not in [str(x) for x in cfg.get(bucket, [])]
+
+    def test_a_sentinel_that_is_also_a_code_is_rejected(self):
+        contradictory = {
+            "missing_assessment_values": ["0", "c"],
+            "endpoints": {"primary": {"positive": ["c"]}},
+        }
+        with pytest.raises(ValueError, match="cannot"):
+            missing_values_from(contradictory)
 
     def test_unrecognised_vocabulary_raises(self):
         experiments, labels = self._labels(["NP"] * 30 + ["EE"] * 10)
@@ -280,20 +381,21 @@ class TestVocabularyMismatch:
         assert "30" in message
         assert "configs/labels.yaml" in message
 
-    def test_known_vocabulary_with_few_unmapped_passes(self):
-        """'*' and 'Z' are undocumented and deliberately unmapped.
+    def test_a_small_tail_of_unknown_codes_does_not_abort(self):
+        """An undocumented code appearing rarely must not stop a whole run.
 
-        They must not abort a run in which the documented codes dominate,
-        otherwise the check is unusable on real CPDB data.
+        The check guards against a wholesale vocabulary mismatch, not against
+        every stray value, or it would be unusable on real data.
         """
         experiments, labels = self._labels(
-            ["+"] * 40 + ["-"] * 40 + ["*"] * 10 + ["Z"] * 5
+            ["+"] * 40 + ["-"] * 40 + ["?"] * 10 + ["Q"] * 5
         )
         check_unmapped(
             experiments,
             labels,
             endpoint_name=self.ENDPOINT,
             policy=self.policy,
+            missing_values=missing_values_from(LAB_CFG),
         )
 
     def test_absent_assessment_is_not_a_mismatch(self):

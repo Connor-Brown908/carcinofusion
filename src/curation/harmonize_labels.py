@@ -48,11 +48,21 @@ UNMAPPED = "unmapped_assessment"
 _MISSING_STRINGS = {"nan", "none", "nat", "<na>"}
 
 
-def normalise_assessment(value: object) -> str | None:
+def normalise_assessment(
+    value: object,
+    *,
+    missing_values: frozenset[str] | None = None,
+) -> str | None:
     """Lower-case, collapse whitespace, strip punctuation noise.
 
     Returns None for anything that means "no assessment recorded", so that a
     missing value is counted as missing rather than as an unrecognised rule.
+
+    `missing_values` carries the source's own sentinels for "no opinion
+    stated" — CPDB writes a blank opinion as '0'. These must be declared in
+    configs/labels.yaml rather than inferred: a sentinel mistaken for a code
+    makes two thirds of a file look like a vocabulary gap, and a code
+    mistaken for a sentinel silently discards real evidence.
     """
     if value is None or (isinstance(value, float) and value != value):
         return None
@@ -61,9 +71,41 @@ def normalise_assessment(value: object) -> str | None:
     s = str(value).strip().lower()
     if not s or s in _MISSING_STRINGS:
         return None
+    if missing_values and s in missing_values:
+        return None
     s = re.sub(r"\s+", " ", s)
     cleaned = s.strip(" .;:")
-    return cleaned or None
+    if not cleaned:
+        return None
+    if missing_values and cleaned in missing_values:
+        return None
+    return cleaned
+
+
+def missing_values_from(lab_cfg: dict) -> frozenset[str]:
+    """The declared "no opinion stated" sentinels, normalised.
+
+    Validated against the vocabulary: a token declared both a sentinel and a
+    label code is a contradiction that would silently void that code, so it
+    fails here rather than producing a quietly smaller dataset.
+    """
+    raw = lab_cfg.get("missing_assessment_values") or []
+    sentinels = frozenset(
+        str(v).strip().lower() for v in raw if str(v).strip()
+    )
+    for endpoint_name, cfg in (lab_cfg.get("endpoints") or {}).items():
+        for bucket in ("positive", "negative", "unresolved"):
+            for term in cfg.get(bucket, []):
+                token = str(term).strip().lower()
+                if token in sentinels:
+                    raise ValueError(
+                        f"configs/labels.yaml: {token!r} is listed both in "
+                        f"missing_assessment_values and in the {bucket} "
+                        f"vocabulary of endpoint {endpoint_name!r}. It cannot "
+                        f"be both absent evidence and a label; remove it from "
+                        f"one of the two."
+                    )
+    return sentinels
 
 
 def build_assessment_map(endpoint_cfg: dict) -> dict[str, int | None]:
@@ -84,6 +126,7 @@ def label_records(
     endpoint_cfg: dict,
     *,
     man: StageManifest,
+    missing_values: frozenset[str] | None = None,
 ) -> tuple[pd.Series, set[str]]:
     """Map each record's assessment to 1 / 0 / None for one endpoint."""
     mapping = build_assessment_map(endpoint_cfg)
@@ -91,7 +134,7 @@ def label_records(
     labels: list[int | None] = []
 
     for value in experiments["author_assessment"]:
-        key = normalise_assessment(value)
+        key = normalise_assessment(value, missing_values=missing_values)
         if key is None:
             labels.append(None)
             continue
@@ -121,6 +164,7 @@ def check_unmapped(
     *,
     endpoint_name: str,
     policy: dict,
+    missing_values: frozenset[str] | None = None,
 ) -> None:
     """Fail the run when the policy does not recognise the data's vocabulary.
 
@@ -137,7 +181,9 @@ def check_unmapped(
     if threshold >= 1.0:
         return
 
-    assessed = experiments["author_assessment"].map(normalise_assessment)
+    assessed = experiments["author_assessment"].map(
+        lambda v: normalise_assessment(v, missing_values=missing_values)
+    )
     has_assessment = assessed.notna()
     n_assessed = int(has_assessment.sum())
     if n_assessed == 0:
@@ -293,11 +339,17 @@ def main(argv: list[str] | None = None) -> int:
     labeled["label_policy_version"] = lab_cfg["label_policy_version"]
 
     endpoint_names = list(lab_cfg["endpoints"].keys())
+    missing_values = missing_values_from(lab_cfg)
+    man.counts["missing_assessment_sentinels"] = sorted(missing_values)
     all_unmapped: set[str] = set()
     for name in endpoint_names:
         col = f"label_{name}"
         labeled[col], unmapped = label_records(
-            experiments, name, lab_cfg["endpoints"][name], man=man
+            experiments,
+            name,
+            lab_cfg["endpoints"][name],
+            man=man,
+            missing_values=missing_values,
         )
         all_unmapped |= unmapped
         # Refuse to build a dataset from a vocabulary the policy does not
@@ -307,6 +359,7 @@ def main(argv: list[str] | None = None) -> int:
             labeled[col],
             endpoint_name=name,
             policy=lab_cfg.get("unmapped_assessment_policy", {}),
+            missing_values=missing_values,
         )
         counts = labeled[col].value_counts(dropna=False).to_dict()
         LOG.info("endpoint %s record labels: %s", name, counts)

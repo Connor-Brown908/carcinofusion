@@ -14,7 +14,12 @@
 # v3: label policy v1.2.0 added the CPDB single-character author-opinion
 # codes ('+', '-') to the record-level vocabulary and made an unrecognised
 # vocabulary a hard failure instead of a silent null.
-dataset_version: v3
+# v4: label policy v1.3.0 replaced the inferred opinion vocabulary with the
+# codes defined in CPDB's own author's-opinion appendix, adding 'c' (NCI/NTP
+# clear evidence, 19.6% of the NCI/NTP file), moving 'p' (some evidence) out
+# of the primary positives, dropping the invented 'n', and declaring '0' as
+# the blank-opinion sentinel rather than a code.
+dataset_version: v4
 
 sources:
   cpdb:

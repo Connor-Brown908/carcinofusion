@@ -109,7 +109,8 @@ carcinofusion/
 │   ├── data.yaml              sources, paths, structure resolution
 │   ├── cpdb_columns.yaml      column mapping — verify before first run
 │   ├── labels.yaml            THE label policy; code hard-codes nothing
-│   └── splits.yaml            split strategy and leakage thresholds
+│   ├── splits.yaml            split strategy and leakage thresholds
+│   └── benchmark.yaml         THE Phase 2 protocol, frozen before training
 ├── data/
 │   ├── raw/                   untouched source files, never written to
 │   ├── interim/               Dataset A, Dataset B, labelled observations
@@ -118,7 +119,8 @@ carcinofusion/
 ├── docs/
 │   ├── dataset_protocol.md    the curation protocol
 │   ├── label_harmonization.md how an assessment becomes a label
-│   └── data_dictionary.md     every column
+│   ├── data_dictionary.md     every column
+│   └── benchmark_protocol.md  the Phase 2 experimental protocol
 ├── sql/schema.sql             PostgreSQL DDL
 ├── src/
 │   ├── common.py              config, manifests, column mapping
@@ -127,15 +129,16 @@ carcinofusion/
 │   ├── curation/              harmonize_labels, audit_conflicts, build_ledger
 │   ├── features/              fingerprints, descriptors
 │   ├── datasets/              build, split, freeze, export_for_postgres
-│   ├── models/                (Phase 2)
-│   └── evaluation/            (Phase 2)
+│   ├── models/                base, baselines, mpnn, pretrained
+│   └── evaluation/            metrics, runner, analysis
 ├── tests/
 │   ├── make_fixture.py        synthetic CPDB-shaped data
 │   ├── run_pipeline.sh        end-to-end run
 │   ├── test_structures.py
 │   ├── test_labels.py
 │   ├── test_splits.py
-│   └── test_acceptance.py     the eight acceptance criteria
+│   ├── test_acceptance.py     the eight acceptance criteria
+│   └── test_benchmark.py      Phase 2 metrics, models, protocol
 └── manifests/                 per-stage provenance
 ```
 
@@ -203,11 +206,13 @@ Two runs of the pipeline from the same inputs produce byte-identical outputs.
 python -m pytest tests/ -v
 ```
 
-137 tests: 77 unit tests covering stereochemistry preservation, salt and
+199 tests: 77 Phase 1 unit tests covering stereochemistry preservation, salt and
 mixture handling, rejection of malformed input, determinism of identity, the
 label policy's three states, no-majority-vote aggregation, species
 eligibility, group assignment and leakage detection; plus 60 acceptance tests
-covering the criteria above.
+covering the criteria above, and 60 Phase 2 tests covering metric
+definitions, uncertainty, threshold discipline, calibration, the model
+interface and the frozen protocol.
 
 The acceptance tests read real artefacts and skip if the pipeline has not been
 run, so a clean `bash tests/run_pipeline.sh` is what makes them meaningful.
@@ -227,6 +232,82 @@ Five tables — `sources`, `chemicals`, `experiments`, `observations`,
 conflicted compounds. A local database is adequate. A `CHECK` constraint
 permits only `0` and `1` for a label while allowing `NULL`, so "unresolved"
 survives into the database as a distinct state.
+
+---
+
+---
+
+# Phase 2 — benchmark suite
+
+A six-model ladder behind one interface, run under both split strategies, with
+enough provenance that any number ties back to the conditions that produced it.
+Full protocol in `docs/benchmark_protocol.md`.
+
+```bash
+python -m src.evaluation.runner   --endpoint primary
+python -m src.evaluation.analysis --endpoint primary
+python -m src.datasets.supabase_sync
+```
+
+| ID | Model | Representation | Status here |
+| --- | --- | --- | --- |
+| B0 | Majority class | none | runs |
+| B1 | Logistic regression | Morgan fingerprints | runs |
+| B2 | Random forest | Morgan fingerprints | runs |
+| B3 | Gradient boosting | fingerprints ± descriptors | runs (LightGBM / XGBoost) |
+| B4 | Message-passing network | molecular graph | runs (PyTorch, CPU) |
+| B5 | Pretrained encoder | SMILES | **unavailable** — weights unreachable |
+
+**No benchmark has been run on real CPDB data.** Every result in this
+repository is stamped `SYNTHETIC_FIXTURE` and is not a carcinogenicity finding.
+Set the provenance marker before a real run:
+
+```bash
+echo "REAL_CPDB" > data/processed/DATA_PROVENANCE
+```
+
+### What the suite enforces
+
+- **PR-AUC is read against prevalence**, never 0.5, and one definition
+  (sklearn average precision) is used across every experiment.
+- **Selection never touches test.** Hyperparameters *and* the operating
+  threshold come from validation; the test set is scored once.
+- **Intervals resample scaffold groups**, not compounds, because compounds
+  sharing a scaffold are not independent.
+- **Model comparison is paired** on identical held-out compounds; overlapping
+  separate intervals are not a test of difference.
+- **A model that cannot run is recorded, not dropped**, with its reason — a
+  missing row reads as "tried and lost".
+- **Ranking metrics return null on a single-class held-out set** rather than
+  the 1.0 average precision would otherwise report as perfection.
+
+### The experiment that matters
+
+Not which model scores highest, but which keeps its score when the test
+chemicals are structurally unlike the training ones. `generalization_gap`
+reports random minus scaffold per model; `similarity_analysis` stratifies test
+performance by nearest-neighbour Tanimoto to training, which is the
+applicability-domain question.
+
+---
+
+# Supabase
+
+The workspace is ephemeral; Supabase is where the dataset and results live
+afterwards. Schema `carcinofusion` — deliberately not `public`, which Supabase
+exposes through PostgREST where a policy-less research table would be readable
+with the anon key. RLS is enabled on every table with no policies, so access is
+deny-by-default.
+
+```bash
+python -m src.datasets.supabase_sync     # emits idempotent SQL
+psql "$SUPABASE_DB_URL" -f data/processed/supabase/apply_all.sql
+```
+
+Nine tables: the six Phase 1 tables plus `benchmark_runs`,
+`benchmark_metrics` and `benchmark_predictions`, with a
+`v_benchmark_summary` view. Every statement is `ON CONFLICT DO UPDATE`, so a
+re-sync updates in place.
 
 ---
 

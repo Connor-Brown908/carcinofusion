@@ -25,6 +25,18 @@
 
 set -uo pipefail
 
+case "${1:-}" in
+  -h|--help)
+    sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+  -*)
+    echo "error: unknown option '$1'. The only argument is a destination directory." >&2
+    echo "Try: bash $0 --help" >&2
+    exit 64
+    ;;
+esac
+
 DEST="${1:-data/raw/cpdb}"
 MIRROR="${MIRROR:-}"
 MIN_BYTES=512

@@ -54,13 +54,49 @@ VOCABULARY_COLUMNS: dict[str, tuple[str, ...]] = {
 # a reference), not a vocabulary. Reporting it would be noise.
 FREE_TEXT_THRESHOLD = 400
 
+# Never whitelist extensions. The first version of this script accepted
+# .txt/.tsv/.csv/.dat and so could not read the .tab files that
+# scripts/fetch_cpdb.sh writes — the same assume-then-fail-quietly mistake
+# this script exists to prevent. A file is data if its first line parses as
+# delimited text; that is decided by looking, not by its name.
+SKIP_SUFFIXES = {
+    ".pdf", ".zip", ".gz", ".tar", ".bz2", ".xz", ".7z", ".parquet",
+    ".xlsx", ".xls", ".doc", ".docx", ".png", ".jpg", ".jpeg", ".gif",
+    ".sqlite", ".db", ".pyc", ".so",
+}
+
+
+def looks_delimited(path: Path) -> tuple[bool, str]:
+    """Decide from content whether this file is a delimited table.
+
+    Returns (is_data, reason). The reason is printed for skipped files so a
+    missing table is never a silent omission.
+    """
+    if path.suffix.lower() in SKIP_SUFFIXES:
+        return False, f"binary or archive ({path.suffix})"
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(8192)
+    except OSError as exc:
+        return False, f"unreadable: {exc}"
+    if not head.strip():
+        return False, "empty"
+    if b"\x00" in head:
+        return False, "binary (contains null bytes)"
+
+    text = head.decode("utf-8", errors="replace")
+    first = text.splitlines()[0] if text.splitlines() else ""
+    if first.lstrip().lower().startswith(("<!doctype", "<html", "<?xml")):
+        return False, "HTML or XML, not data (a saved error page?)"
+    if not any(d in first for d in ("\t", ",", ";", "|")):
+        return False, "no delimiter on the first line"
+    return True, "delimited text"
+
 
 def sniff_delimiter(first_line: str) -> str:
-    if "\t" in first_line:
-        return "\t"
-    if first_line.count(",") > first_line.count(";"):
-        return ","
-    return ";"
+    counts = {d: first_line.count(d) for d in ("\t", ",", ";", "|")}
+    best = max(counts, key=lambda d: counts[d])
+    return best if counts[best] else "\t"
 
 
 def concept_for(column: str) -> str | None:
@@ -178,13 +214,38 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
 
-    files = sorted(
-        p for p in directory.iterdir()
-        if p.is_file() and p.suffix.lower() in {".txt", ".tsv", ".csv", ".dat"}
-    )
+    # Recurse: fetch_cpdb.sh writes flat, but an archive extracted by hand
+    # leaves a subfolder, and a table one level down is still a table.
+    candidates = sorted(p for p in directory.rglob("*") if p.is_file())
+    files: list[Path] = []
+    skipped: list[tuple[Path, str]] = []
+    for path in candidates:
+        is_data, reason = looks_delimited(path)
+        (files if is_data else skipped).append(
+            path if is_data else (path, reason)  # type: ignore[arg-type]
+        )
+
     if not files:
-        print(f"error: no data files in {directory}.", file=sys.stderr)
-        print("Expected .txt / .tsv / .csv files from scripts/fetch_cpdb.sh.",
+        print(f"error: no delimited data files under {directory}.",
+              file=sys.stderr)
+        if skipped:
+            # Say what is actually there. "No data files" with no inventory
+            # is the kind of dead-end message that wastes a round trip.
+            print(f"\n{len(skipped)} file(s) present but not usable as data:",
+                  file=sys.stderr)
+            for path, reason in skipped[:25]:
+                rel = path.relative_to(directory)
+                print(f"  {str(rel):<40} {path.stat().st_size:>12,} bytes"
+                      f"   {reason}", file=sys.stderr)
+            if len(skipped) > 25:
+                print(f"  ... and {len(skipped) - 25} more", file=sys.stderr)
+        else:
+            print(f"The directory is empty.", file=sys.stderr)
+        print("\nDownload them with:  bash scripts/fetch_cpdb.sh",
+              file=sys.stderr)
+        print("Already downloaded elsewhere? Pass the directory:",
+              file=sys.stderr)
+        print("  python3 scripts/inspect_values.py <that directory>",
               file=sys.stderr)
         return 2
 
@@ -192,7 +253,10 @@ def main(argv: list[str] | None = None) -> int:
     print("CPDB VALUE INSPECTOR")
     print("=" * 72)
     print(f"Directory: {directory.resolve()}")
-    print(f"Files:     {len(files)}")
+    print(f"Data files: {len(files)}")
+    if skipped:
+        print(f"Skipped:    {len(skipped)} "
+              f"({', '.join(sorted({r for _, r in skipped}))})")
     print()
     print("Paste this whole output back. The label policy in")
     print("configs/labels.yaml will be written from these values rather than")

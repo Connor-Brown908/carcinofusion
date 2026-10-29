@@ -46,7 +46,11 @@ echo "=== 9. freeze ==="
 python3 -m src.datasets.freeze_dataset --note "fixture end-to-end run" --force
 
 echo "=== 10. verify freeze ==="
-python3 -m src.datasets.freeze_dataset --verify v1
+# Read the version from config rather than hardcoding it: a policy change
+# bumps dataset_version, and a hardcoded value here would verify a version
+# that no longer exists.
+DATASET_VERSION="$(python3 -c 'import sys; sys.path.insert(0,"."); from src.common import load_config; print(load_config("data")["dataset_version"])')"
+python3 -m src.datasets.freeze_dataset --verify "$DATASET_VERSION"
 
 echo "=== 11. export for postgres ==="
 python3 -m src.datasets.export_for_postgres

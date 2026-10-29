@@ -66,6 +66,43 @@ Read the documentation before the first production run:
 [Tab_Separated_CPDB.pdf](https://ftp.nlm.nih.gov/projects/SISFTP/CPDB/Documentation/Tab_Separated_CPDB.pdf)
 and [Documentation_for_tab.pdf](https://files.toxplanet.com/cpdb/pdfs/Documentation_for_tab.pdf).
 
+## Getting structures
+
+CPDB's main tables carry `chemcode` and CAS but **no structures**, and nothing
+can be modelled without them. This is the step that takes real time.
+
+```bash
+python scripts/build_resolution_table.py
+```
+
+It writes `data/external/structure_resolution.tsv` with a source and retrieval
+date on every row, and `structure_unresolved.tsv` for everything it could not
+resolve. Sources are tried in order per chemical:
+
+1. **A local CPDB structure file**, via `--cpdb-structures`. CPDB shipped
+   `chemical-structures.tab` (SMILES and InChI from EPA DSSTox), but its
+   `toxnet.nlm.nih.gov` URLs died with TOXNET in 2019 and it was last updated
+   in 2007 — a good starting point, not an authority.
+2. **PubChem by CAS**, through PUG REST, rate-limited to PubChem's published
+   5 requests per second.
+3. **PubChem by name**, for chemicals whose CAS lookup misses.
+
+Results are cached, so the run is resumable. Expect it to take 10–20 minutes
+for CPDB's ~1,500 chemicals on a first pass.
+
+Two things to do with the output before freezing, both of which the pipeline
+cannot do for you:
+
+- **Review `structure_unresolved.tsv`.** Those chemicals stay in
+  `structure_review.parquet` and never get a label, so a gap here quietly
+  shrinks the dataset rather than corrupting it.
+- **Spot-check resolved rows.** A CAS number is not proof of identity, and
+  the name-matched rows are the likeliest to be wrong.
+
+Alternatives if PubChem coverage disappoints: the
+[EPA CompTox Chemicals Dashboard](https://comptox.epa.gov/dashboard/) does
+batch CAS to SMILES and exports a file you can reshape into the same columns.
+
 ## Before the first real run
 
 Two things need your attention. Both fail loudly rather than silently, but
@@ -79,10 +116,9 @@ both are worth doing deliberately.
 
 2. **Supply a structure resolution table.** The pipeline performs no network
    lookup, so that the structure a compound had when the dataset was frozen is
-   recorded rather than re-fetched later. Create
-   `data/external/structure_resolution.tsv` with `chemcode` or `cas_number`,
-   plus `smiles`, `source` and `retrieved_date`. See
-   `docs/dataset_protocol.md`.
+   recorded rather than re-fetched later. `scripts/build_resolution_table.py`
+   builds it (see *Getting structures* above); the format is `chemcode` or
+   `cas_number`, plus `smiles`, `source` and `retrieved_date`.
 
 ---
 
@@ -152,7 +188,9 @@ carcinofusion/
 │   ├── label_harmonization.md how an assessment becomes a label
 │   ├── data_dictionary.md     every column
 │   └── benchmark_protocol.md  the Phase 2 experimental protocol
-├── scripts/fetch_cpdb.sh      standalone CPDB downloader
+├── scripts/
+│   ├── fetch_cpdb.sh          standalone CPDB downloader
+│   └── build_resolution_table.py  CAS/name -> SMILES via PubChem
 ├── sql/schema.sql             PostgreSQL DDL
 ├── src/
 │   ├── common.py              config, manifests, column mapping

@@ -193,6 +193,7 @@ carcinofusion/
 │   ├── fetch_cpdb.sh          standalone CPDB downloader
 │   ├── build_resolution_table.py  CAS/name -> SMILES via PubChem
 │   ├── check_env.py           report missing packages, stdlib-only
+│   ├── diagnose_attrition.py  trace where compounds are lost
 │   ├── check_columns.py       verify cpdb_columns.yaml against real headers
 │   └── run_production.sh      the pipeline on real data, with checkpoints
 ├── sql/schema.sql             PostgreSQL DDL

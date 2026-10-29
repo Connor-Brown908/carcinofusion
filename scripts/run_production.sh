@@ -53,6 +53,17 @@ if [ -d data/raw/cpdb_test ]; then
   echo "         make sure that holds the real download, not fixture output." >&2
 fi
 
+echo "Pre-flight: checking dependencies"
+if ! python3 scripts/check_env.py --pipeline >/tmp/cf_env.$$ 2>&1; then
+  cat /tmp/cf_env.$$
+  rm -f /tmp/cf_env.$$
+  echo >&2
+  echo "Install the packages above, then re-run this script." >&2
+  exit 1
+fi
+rm -f /tmp/cf_env.$$
+echo "  dependencies OK"
+
 echo "Pre-flight: checking the column mapping against your files"
 if ! python3 scripts/check_columns.py >/tmp/cf_cols.$$ 2>&1; then
   sed -n '/required column/,$p' /tmp/cf_cols.$$

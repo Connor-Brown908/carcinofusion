@@ -7,7 +7,11 @@
 # Nothing in this pipeline ever writes to data/raw/. Raw files are read-only
 # inputs whose checksums are recorded in manifests/.
 
-dataset_version: v1
+# v2: label policy v1.1.0 raised min_negative_records from 1 to 2, so a
+# compound needs two corroborating negative bioassays before it is labelled
+# negative. A frozen dataset is immutable, so the change produces a new
+# version rather than editing v1.
+dataset_version: v2
 
 sources:
   cpdb:
@@ -16,7 +20,26 @@ sources:
       Carcinogenic Potency Database. Long-term animal carcinogenicity
       experiments compiled from the NCI/NTP bioassay program and the
       general published literature.
-    base_url: https://ftp.nlm.nih.gov/projects/extract/CPDB/
+    # CPDB is no longer updated. NLM's note on the data.gov catalogue entry
+    # reads "This dataset is no-longer updated with new content", so these are
+    # archival files and the version you download should not drift.
+    #
+    # Mirrors are tried in order. NLM is the authoritative source; ToxPlanet
+    # hosts the same tab-separated distribution and appends `.txt` to every
+    # filename, which the downloader normalises.
+    base_url: https://ftp.nlm.nih.gov/projects/SISFTP/CPDB/Data%20Files/
+    mirrors:
+      - name: nlm
+        base_url: https://ftp.nlm.nih.gov/projects/SISFTP/CPDB/Data%20Files/
+        suffix: ""
+      - name: toxplanet
+        base_url: https://files.toxplanet.com/cpdb/tab/
+        suffix: ".txt"
+    documentation:
+      - https://ftp.nlm.nih.gov/projects/SISFTP/CPDB/Documentation/Tab_Separated_CPDB.pdf
+      - https://files.toxplanet.com/cpdb/pdfs/Documentation_for_tab.pdf
+      - https://files.toxplanet.com/cpdb/methods.html
+    catalogue: https://catalog.data.gov/dataset/carcinogenic-potency-database-cpdb
     retrieval_date: null        # set by download_cpdb.py at acquisition time
     source_version: null        # set manually after reading CPDB documentation
     license: >
@@ -52,6 +75,47 @@ sources:
         filename: cpdb.litdose.tab
         role: dose_response
         description: Dose and tumour-incidence detail for literature records.
+        required: false
+      # Literature citations. Not used by the current pipeline, but it is what
+      # turns a refnum into a traceable study, so it is worth having locally.
+      cit:
+        filename: cpdb.cit.tab
+        role: citations
+        description: Literature citation detail, keyed by reference number.
+        required: false
+      # Appendix lookup tables. CPDB encodes species, strain, route, site and
+      # histopathology as codes; these decode them. configs/cpdb_columns.yaml
+      # carries a small hand-written vocabulary for species and sex, which
+      # these tables supersede — prefer them once downloaded.
+      species_lookup:
+        filename: cpdb.species.tab
+        role: vocabulary
+        description: Species code lookup.
+        required: false
+      strain_lookup:
+        filename: cpdb.strain.tab
+        role: vocabulary
+        description: Strain code lookup.
+        required: false
+      route_lookup:
+        filename: cpdb.route.tab
+        role: vocabulary
+        description: Exposure route code lookup.
+        required: false
+      tissue_lookup:
+        filename: cpdb.tissue.tab
+        role: vocabulary
+        description: Target site (tissue) code lookup.
+        required: false
+      tumor_lookup:
+        filename: cpdb.tumor.tab
+        role: vocabulary
+        description: Histopathology code lookup.
+        required: false
+      journal_lookup:
+        filename: cpdb.journal.tab
+        role: vocabulary
+        description: Journal code lookup.
         required: false
 
 # Where derived artefacts land. Each stage writes to its own directory so a

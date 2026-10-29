@@ -8,7 +8,7 @@ The policy lives in `configs/labels.yaml`. No module hard-codes an
 interpretation of any assessment string. Changing a mapping requires a version
 bump, which produces a new dataset version with a change log.
 
-Current policy version: **`v1.0.0`**
+Current policy version: **`v1.1.0`**
 
 ---
 
@@ -87,7 +87,7 @@ another. That is a scientific finding, not noise to be smoothed away.
 | Evidence | Label | Conflicted |
 | --- | --- | --- |
 | all eligible records positive | 1 | no |
-| all eligible records negative (at least `min_negative_records`) | 0 | no |
+| all eligible records negative, at least `min_negative_records` of them | 0 | no |
 | positive records, rest null | 1 | no |
 | at least one positive **and** at least one negative | `null` | **yes** |
 | only null records | `null` | no |
@@ -96,6 +96,33 @@ another. That is a scientific finding, not noise to be smoothed away.
 One positive against nine negatives is **conflicted**, not negative. A majority
 vote would discard the single positive finding, which is exactly the finding a
 carcinogenicity assessment most needs to see.
+
+### Negatives need corroboration; positives do not
+
+`min_negative_records` is **2** from policy v1.1.0. A compound with exactly one
+negative record and no positives is labelled `null`, not `0`.
+
+The asymmetry is deliberate. One positive bioassay establishes that a compound
+*can* induce tumours. One negative establishes only that this particular study
+did not detect them, which is a weaker claim — and replicate rodent bioassays
+agree at roughly 81% balanced accuracy, with only about 69% of substances found
+toxic being found toxic again on repeat. A lone negative is close to a
+coin-flip's worth of evidence that a compound is clean.
+
+It also follows from the context of use. Supporting an ICH S1B(R1) waiver means
+being trusted to say a compound is **not** a carcinogen, which makes negative
+predictive value the governing metric. A training set whose negatives rest on
+single unreplicated studies cannot support that claim, whatever the headline
+accuracy says.
+
+The cost is real and worth watching. Compounds with exactly one negative record
+move from `0` to `null`, which shrinks the negative class and raises apparent
+prevalence — so PR-AUC must be read against the new prevalence, not compared
+across policy versions. The audit report quantifies the shift, and the curation
+ledger records each affected compound under `compound_unresolved_label`.
+
+To go back to the looser rule, set `min_negative_records: 1` and bump the
+policy version; do not edit a frozen dataset.
 
 Conflicted compounds are excluded from the primary binary training set and
 retained in the database in full, with their evidence counts intact, available
@@ -113,7 +140,7 @@ conflict with a rat positive, and cannot by itself produce a label.
 | --- | --- |
 | high | three or more agreeing eligible records |
 | medium | two agreeing eligible records |
-| low | a single eligible record |
+| low | a single eligible record (positives only; a lone negative is unresolved) |
 | none | unresolved or conflicted |
 
 Recorded per compound so downstream work can weight or filter without

@@ -114,6 +114,31 @@ class TestAggregationWithoutMajorityVote:
         assert out.loc[0, "label"] == 0
         assert not out.loc[0, "is_conflicted"]
 
+    def test_a_single_negative_record_is_not_enough_for_a_negative_label(self):
+        """Policy v1.1.0 raised min_negative_records to 2.
+
+        One positive bioassay establishes that a compound CAN induce tumours.
+        One negative establishes only that this study did not detect them,
+        which is a weaker claim — and rodent bioassays reproduce at roughly
+        81% balanced accuracy. Supporting a waiver means being trusted on the
+        negatives, so a lone negative stays unresolved.
+        """
+        assert AGG["min_negative_records"] >= 2
+        out = agg([("A", "rat", 0)])
+        assert out.loc[0, "label"] is None
+        assert not out.loc[0, "is_conflicted"]
+        assert "min_negative_records" in out.loc[0, "aggregation_reason"]
+
+    def test_a_single_positive_record_still_gives_a_positive_label(self):
+        """The asymmetry is the point: positives are not held to the same bar."""
+        out = agg([("A", "rat", 1)])
+        assert out.loc[0, "label"] == 1
+
+    def test_the_corroboration_bar_applies_per_compound_not_per_species(self):
+        """Two negatives in one species corroborate each other."""
+        out = agg([("A", "rat", 0), ("A", "rat", 0)])
+        assert out.loc[0, "label"] == 0
+
     def test_one_positive_against_many_negatives_is_conflicted_not_outvoted(self):
         """A majority vote would call this negative. The policy must not."""
         out = agg([("A", "rat", 1)] + [("A", "mouse", 0)] * 9)

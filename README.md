@@ -15,13 +15,16 @@ that a result derived from it can be reproduced and defended.
 ```bash
 # 1. environment
 conda env create -f environment.yml && conda activate carcinofusion
-# or: pip install rdkit pandas pyarrow pyyaml pytest
+# or: pip install rdkit pandas pyarrow pyyaml pytest scikit-learn lightgbm torch
 
 # 2. prove the pipeline works, on synthetic data
 bash tests/run_pipeline.sh
 
-# 3. run it for real
-#    place the CPDB files in data/raw/cpdb/ first (see docs/dataset_protocol.md)
+# 3. get the real CPDB files
+bash scripts/fetch_cpdb.sh                        # downloads into data/raw/cpdb/
+python -m src.ingestion.download_cpdb --print-urls  # or fetch them by hand
+
+# 4. run it for real
 python -m src.ingestion.download_cpdb
 python -m src.ingestion.parse_cpdb
 python -m src.chemistry.resolve_identity
@@ -34,6 +37,34 @@ python -m src.datasets.freeze_dataset --note "initial Phase 1 freeze"
 ```
 
 ---
+
+## Getting the CPDB data
+
+CPDB is archival — NLM's catalogue entry states it is no longer updated — so
+the files should be stable and the recorded checksums will prove whether they
+drifted.
+
+| Source | Location | Note |
+| --- | --- | --- |
+| NLM (authoritative) | `ftp.nlm.nih.gov/projects/SISFTP/CPDB/Data Files/` | plain filenames |
+| ToxPlanet (mirror) | `files.toxplanet.com/cpdb/tab/` | appends `.txt`, stripped on save |
+| Catalogue | [data.gov entry](https://catalog.data.gov/dataset/carcinogenic-potency-database-cpdb) | publisher and licensing |
+
+```bash
+bash scripts/fetch_cpdb.sh          # bash + curl only, no Python needed
+MIRROR=toxplanet bash scripts/fetch_cpdb.sh
+VERBOSE=1 bash scripts/fetch_cpdb.sh   # show transfer errors
+```
+
+Three files are required (`cpdb.ncintp.tab`, `cpdb.lit.tab`,
+`cpdb.chemname.tab`); the dose tables, citations and the appendix lookup
+tables are optional but worth having. The appendix tables decode CPDB's
+species, strain, route, site and histopathology codes and supersede the small
+hand-written vocabulary in `configs/cpdb_columns.yaml`.
+
+Read the documentation before the first production run:
+[Tab_Separated_CPDB.pdf](https://ftp.nlm.nih.gov/projects/SISFTP/CPDB/Documentation/Tab_Separated_CPDB.pdf)
+and [Documentation_for_tab.pdf](https://files.toxplanet.com/cpdb/pdfs/Documentation_for_tab.pdf).
 
 ## Before the first real run
 
@@ -121,6 +152,7 @@ carcinofusion/
 │   ├── label_harmonization.md how an assessment becomes a label
 │   ├── data_dictionary.md     every column
 │   └── benchmark_protocol.md  the Phase 2 experimental protocol
+├── scripts/fetch_cpdb.sh      standalone CPDB downloader
 ├── sql/schema.sql             PostgreSQL DDL
 ├── src/
 │   ├── common.py              config, manifests, column mapping
@@ -206,7 +238,7 @@ Two runs of the pipeline from the same inputs produce byte-identical outputs.
 python -m pytest tests/ -v
 ```
 
-199 tests: 77 Phase 1 unit tests covering stereochemistry preservation, salt and
+202 tests: 80 Phase 1 unit tests covering stereochemistry preservation, salt and
 mixture handling, rejection of malformed input, determinism of identity, the
 label policy's three states, no-majority-vote aggregation, species
 eligibility, group assignment and leakage detection; plus 60 acceptance tests

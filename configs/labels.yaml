@@ -15,7 +15,7 @@
 # absence. Rows labelled null are excluded from ordinary binary loss and
 # retained for analysis.
 
-label_policy_version: v1.0.0
+label_policy_version: v1.1.0
 
 endpoint_definition: >
   Evidence of carcinogenic activity in long-term rodent bioassays, determined
@@ -105,7 +105,26 @@ aggregation:
 
   # A single negative experiment is weak evidence that a chemical is not a
   # carcinogen. Require corroboration before assigning a negative label.
-  min_negative_records: 1
+  #
+  # Raised from 1 to 2 in policy v1.1.0. The reasoning is asymmetric and
+  # deliberate. One positive bioassay establishes that a compound CAN induce
+  # tumours; one negative bioassay establishes only that this particular
+  # study did not detect them, which is a weaker claim. Rodent bioassays
+  # reproduce at roughly 81% balanced accuracy, and only about 69% of
+  # substances found toxic are found toxic again on repeat, so a lone negative
+  # is close to a coin-flip's worth of evidence that the compound is clean.
+  #
+  # It also follows from the intended context of use. Supporting an ICH
+  # S1B(R1) waiver means being trusted to say a compound is NOT a carcinogen,
+  # which makes negative predictive value the governing metric. A training set
+  # whose negatives rest on single unreplicated studies cannot support that
+  # claim, however good the headline accuracy looks.
+  #
+  # The cost is real and should be watched: compounds with exactly one
+  # negative record move from label 0 to null, shrinking the negative class
+  # and raising apparent prevalence. The audit report and the curation ledger
+  # both quantify the shift, under reason code compound_unresolved_label.
+  min_negative_records: 2
 
   # Species restriction for the headline endpoint. Records from other species
   # are retained in the database and excluded from this endpoint's labels.
@@ -133,5 +152,8 @@ confidence:
     description: Two eligible records, agreeing.
     min_records: 2
   low:
+    # Reachable only for positives from policy v1.1.0 onward: a negative needs
+    # min_negative_records (2) to be assigned at all, so a single negative
+    # record yields null rather than a low-confidence 0.
     description: A single eligible record.
     min_records: 1

@@ -194,6 +194,9 @@ carcinofusion/
 │   ├── build_resolution_table.py  CAS/name -> SMILES via PubChem
 │   ├── check_env.py           report missing packages, stdlib-only
 │   ├── diagnose_attrition.py  trace where compounds are lost
+│   ├── build_mechanism_labels.py  genotoxic vs non-genotoxic tagging
+│   ├── import_external_predictions.py  run incumbents on your test set
+│   ├── make_figure.py         Figure 1, refuses on unsupportable data
 │   ├── check_columns.py       verify cpdb_columns.yaml against real headers
 │   └── run_production.sh      the pipeline on real data, with checkpoints
 ├── sql/schema.sql             PostgreSQL DDL

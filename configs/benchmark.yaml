@@ -1,0 +1,238 @@
+# Phase 2 experimental protocol.
+#
+# These decisions are frozen BEFORE any model is trained. The runner reads this
+# file and stamps its contents onto every result, so a number can always be
+# tied to the conditions that produced it.
+#
+# Changing anything here requires a protocol_version bump, which makes earlier
+# results distinguishable from later ones rather than silently comparable.
+
+protocol_version: p2-v1.0.0
+
+task:
+  name: binary_rodent_carcinogenicity
+  description: >
+    Binary classification of evidence of carcinogenic activity in long-term
+    rodent bioassays, from standardised molecular structure. This is an
+    experimental-evidence endpoint, not a claim about human carcinogenicity.
+  endpoint_name: primary          # as defined in configs/labels.yaml
+  input: standardized_structure
+
+evaluation:
+  # Scaffold is primary: it measures generalisation to unfamiliar chemistry.
+  # Random is secondary and diagnostic, for comparison with published numbers
+  # that quote it.
+  primary_split: scaffold
+  secondary_split: random
+
+  # Model selection happens on validation ONLY. The internal test set is
+  # touched once, after selection is finished. The runner enforces this: it
+  # refuses to score the test set while in selection mode.
+  selection_partition: validation
+  final_partition: test
+  external_partition: external
+
+  # A held-out set consulted repeatedly stops being held out. The runner
+  # records every test-set evaluation so repeated touches are visible.
+  enforce_single_test_evaluation: true
+
+metrics:
+  # PR-AUC is primary and is always reported next to class prevalence, since
+  # its baseline is the positive rate rather than 0.5.
+  primary: pr_auc
+  report:
+    - pr_auc                 # average_precision_score
+    - roc_auc
+    - mcc
+    - balanced_accuracy
+    - sensitivity
+    - specificity
+    - precision
+    - brier
+  # average_precision_score is average precision, which is related to but not
+  # numerically identical to the trapezoidal area under a PR curve. One
+  # definition is used everywhere; it is named here so comparisons are valid.
+  pr_auc_definition: sklearn_average_precision
+
+  # Operating threshold for the threshold-dependent metrics. Chosen on
+  # VALIDATION, never on test.
+  threshold_policy: max_mcc_on_validation
+  default_threshold: 0.5
+
+uncertainty:
+  method: bootstrap_percentile
+  n_bootstrap: 2000
+  # Resampling is over held-out compounds. For the scaffold split, resampling
+  # over scaffold groups is the more conservative choice because compounds
+  # within a group are not independent.
+  resample_unit: scaffold_group
+  confidence_level: 0.95
+  # Model-vs-model comparison is paired on the same held-out compounds, so the
+  # difference is not confounded by which compounds each model happened to see.
+  paired_comparison: true
+
+calibration:
+  n_bins: 10
+  strategy: quantile
+  report_brier_decomposition: true
+
+similarity_analysis:
+  # Performance against chemical novelty: how far does accuracy fall as test
+  # compounds get further from anything in training.
+  fingerprint: morgan
+  radius: 2
+  n_bits: 2048
+  # Nearest-neighbour Tanimoto bins used to stratify test performance.
+  bins: [0.0, 0.3, 0.5, 0.7, 1.0]
+
+reproducibility:
+  seed: 42
+  # Several seeds for the stochastic models, so a single lucky initialisation
+  # is not reported as a result.
+  n_repeats: 3
+  repeat_seeds: [42, 1337, 20261029]
+  record_dependency_versions: true
+
+# ---------------------------------------------------------------------------
+# Model registry
+# ---------------------------------------------------------------------------
+# Hyperparameter grids are searched on validation only. Grids are deliberately
+# small: a baseline that needs an enormous search to look good is not a
+# baseline, and a large grid on a small dataset overfits the validation set.
+models:
+
+  B0:
+    name: majority_class
+    representation: none
+    enabled: true
+    purpose: >
+      Sanity reference. Exposes misleading accuracy when classes are
+      imbalanced. Not intended to be useful.
+    hyperparameters: {}
+
+  B1:
+    name: logistic_regression
+    representation: morgan_fp
+    enabled: true
+    featurizer:
+      kind: morgan
+      radius: 2
+      n_bits: 2048
+      use_chirality: true      # stereochemistry survives Phase 1; use it
+      counts: false
+    grid:
+      C: [0.01, 0.1, 1.0, 10.0]
+      class_weight: [null, balanced]
+    fixed:
+      max_iter: 5000
+      solver: liblinear
+
+  B2:
+    name: random_forest
+    representation: morgan_fp
+    enabled: true
+    featurizer:
+      kind: morgan
+      radius: 2
+      n_bits: 2048
+      use_chirality: true
+      counts: false
+    grid:
+      n_estimators: [300, 600]
+      max_depth: [null, 12]
+      min_samples_leaf: [1, 3]
+      class_weight: [null, balanced]
+    fixed:
+      n_jobs: -1
+
+  B3:
+    name: gradient_boosting
+    representation: morgan_fp_plus_descriptors
+    enabled: true
+    # Compared both ways, because the question "do descriptors help" is worth
+    # answering rather than assuming.
+    variants: [fp_only, fp_plus_descriptors]
+    backend: lightgbm          # xgboost also installed; backend is recorded
+    featurizer:
+      kind: morgan
+      radius: 2
+      n_bits: 2048
+      use_chirality: true
+      counts: true             # counts carry more than bits for trees
+    descriptors:
+      # A small, interpretable set. Hundreds of redundant descriptors would
+      # make the baseline less reproducible, not more accurate.
+      - mol_weight
+      - logp
+      - tpsa
+      - h_donors
+      - h_acceptors
+      - rotatable_bonds
+      - aromatic_rings
+      - aliphatic_rings
+      - ring_count
+      - fraction_csp3
+      - heteroatoms
+      - heavy_atoms
+    grid:
+      num_leaves: [15, 31]
+      learning_rate: [0.05, 0.1]
+      n_estimators: [200, 500]
+      min_child_samples: [5, 20]
+    fixed:
+      verbosity: -1
+
+  B4:
+    name: message_passing_nn
+    representation: molecular_graph
+    enabled: true
+    purpose: >
+      Learned structural representation, for comparison against hand-engineered
+      fingerprints under the identical scaffold partition.
+    architecture:
+      hidden_dim: 128
+      n_message_passing_steps: 3
+      readout: mean_max
+      dropout: 0.15
+    grid:
+      learning_rate: [0.001, 0.0003]
+      hidden_dim: [64, 128]
+    fixed:
+      batch_size: 32
+      max_epochs: 120
+      early_stopping_patience: 20
+      weight_decay: 0.0
+
+  B5:
+    name: pretrained_encoder
+    representation: smiles
+    enabled: true
+    # Attempted; registers as `unavailable` with a reason when the weights
+    # cannot be fetched, rather than being silently dropped from the suite.
+    checkpoint: seyonec/ChemBERTa-zinc-base-v1
+    modes: [frozen_embeddings, finetune]
+    default_mode: frozen_embeddings
+    grid:
+      C: [0.1, 1.0, 10.0]      # logistic head on frozen embeddings
+    fixed:
+      max_length: 256
+      batch_size: 32
+
+# ---------------------------------------------------------------------------
+# Reporting honesty
+# ---------------------------------------------------------------------------
+reporting:
+  # Stamped onto every run. SYNTHETIC_FIXTURE marks results produced from
+  # invented data while exercising the harness; those are never carcinogenicity
+  # findings and the report refuses to present them as such.
+  require_data_provenance: true
+
+  # A published number is only a reproduction when the dataset, endpoint and
+  # evaluation protocol are demonstrably comparable. Otherwise the comparison
+  # is reported as a new standardised one.
+  claim_reproduction_only_if_comparable: true
+
+  # Minimum held-out compounds below which metrics are reported as
+  # indicative only. Small held-out sets give confidence intervals so wide
+  # that a point estimate misleads.
+  min_test_compounds_for_headline: 50

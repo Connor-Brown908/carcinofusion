@@ -1,0 +1,100 @@
+# CPDB column mapping.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# The parser does not guess which column means what. It reads this mapping,
+# then checks the real file's header against it. If a declared source column is
+# missing, the parse FAILS and names the column. It does not fall back to
+# positional guessing or silently drop the field.
+#
+# The defaults below reflect the CPDB field names in common use. VERIFY THEM
+# against the CPDB documentation that ships with your download before the first
+# production run, and correct this file rather than the parser. Candidate
+# aliases are tried in order; the first header present wins, and which alias
+# matched is recorded in the parse report.
+#
+# `chemcode` is the CPDB chemical code and is the documented join key between
+# the experiment tables, the chemical-name table and the dose tables. Joins are
+# performed on it alone. Row order is never used to associate records.
+
+join_key: chemcode
+
+# ---------------------------------------------------------------------------
+# Experiment tables: cpdb.ncintp.tab and cpdb.lit.tab
+# ---------------------------------------------------------------------------
+experiments:
+  # canonical_name: [accepted source header aliases, in priority order]
+  chemcode:        [chemcode, chem_code, CHEMCODE]
+  cas_number:      [casno, cas, cas_no, CASNO]
+  species:         [species, spec, SPECIES]
+  sex:             [sex, SEX]
+  strain:          [strain, STRAIN]
+  exposure_route:  [route, xpo_route, exposure_route, ROUTE]
+  dose_duration:   [xpo, dosedur, exposure_duration, XPO]
+  study_duration:  [dur, duration, study_duration, DUR]
+  target_organ:    [site, target_site, tissue, SITE]
+  tumor_endpoint:  [tumor_type, tumour_type, histopath, TUMORTYPE]
+  td50:            [td50, TD50]
+  author_assessment: [opinion, author_opinion, opin, OPINION]
+  reference:       [refnum, reference, ref, REFNUM]
+  notes:           [notes, note, NOTES]
+
+  # Columns that must be present for the parse to proceed at all.
+  required:
+    - chemcode
+    - species
+    - author_assessment
+
+# ---------------------------------------------------------------------------
+# Chemical name / identity table: cpdb.chemname.tab
+# ---------------------------------------------------------------------------
+chemname:
+  chemcode:      [chemcode, chem_code, CHEMCODE]
+  cas_number:    [casno, cas, cas_no, CASNO]
+  chemical_name: [chemname, name, chemical_name, CHEMNAME]
+
+  required:
+    - chemcode
+
+# ---------------------------------------------------------------------------
+# Dose / incidence tables: cpdb.ncntdose.tab and cpdb.litdose.tab
+# ---------------------------------------------------------------------------
+dose:
+  chemcode:        [chemcode, chem_code, CHEMCODE]
+  species:         [species, spec, SPECIES]
+  sex:             [sex, SEX]
+  strain:          [strain, STRAIN]
+  exposure_route:  [route, xpo_route, exposure_route, ROUTE]
+  target_organ:    [site, target_site, tissue, SITE]
+  dose_level:      [dose, dosemg, dose_level, DOSE]
+  n_treated:       [ntreated, n_treated, total, NTREATED]
+  n_with_tumor:    [ntumor, n_tumor, tumor_count, NTUMOR]
+
+  required:
+    - chemcode
+
+# ---------------------------------------------------------------------------
+# Value vocabularies
+# ---------------------------------------------------------------------------
+# CPDB encodes species and sex compactly. These maps normalise the values
+# WITHOUT discarding the original, which is always retained alongside.
+vocabularies:
+  species:
+    r: rat
+    m: mouse
+    h: hamster
+    d: dog
+    p: primate
+    rat: rat
+    mouse: mouse
+    hamster: hamster
+  sex:
+    m: male
+    f: female
+    b: both
+    male: male
+    female: female
+
+# Values that mean "no value recorded". Normalised to null, never to 0 or to a
+# negative finding.
+null_tokens: ['', '.', 'NA', 'N/A', 'NULL', 'null', '-', 'nd', 'ND', 'unknown']

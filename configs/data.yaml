@@ -1,0 +1,78 @@
+# Data acquisition and provenance configuration.
+#
+# The CPDB tab-separated files are NOT redistributed with this repository.
+# Download them yourself (see docs/dataset_protocol.md) and place the
+# untouched originals in data/raw/cpdb/.
+#
+# Nothing in this pipeline ever writes to data/raw/. Raw files are read-only
+# inputs whose checksums are recorded in manifests/.
+
+dataset_version: v1
+
+sources:
+  cpdb:
+    source_database: CPDB
+    description: >
+      Carcinogenic Potency Database. Long-term animal carcinogenicity
+      experiments compiled from the NCI/NTP bioassay program and the
+      general published literature.
+    base_url: https://ftp.nlm.nih.gov/projects/extract/CPDB/
+    retrieval_date: null        # set by download_cpdb.py at acquisition time
+    source_version: null        # set manually after reading CPDB documentation
+    license: >
+      CPDB is distributed by the US National Library of Medicine. Confirm
+      current terms of use before redistribution. This repository stores
+      checksums and derived data only.
+    raw_dir: data/raw/cpdb
+    files:
+      # Primary experimental records
+      ncintp:
+        filename: cpdb.ncintp.tab
+        role: experiments
+        description: NCI/NTP long-term bioassay experimental records.
+        required: true
+      lit:
+        filename: cpdb.lit.tab
+        role: experiments
+        description: Carcinogenicity experiments from the general literature.
+        required: true
+      # Chemical identity
+      chemname:
+        filename: cpdb.chemname.tab
+        role: chemical_identity
+        description: Chemical names, CPDB chemcodes and CAS Registry Numbers.
+        required: true
+      # Dose / tumour-incidence detail
+      ncntdose:
+        filename: cpdb.ncntdose.tab
+        role: dose_response
+        description: Dose and tumour-incidence detail for NCI/NTP records.
+        required: false
+      litdose:
+        filename: cpdb.litdose.tab
+        role: dose_response
+        description: Dose and tumour-incidence detail for literature records.
+        required: false
+
+# Where derived artefacts land. Each stage writes to its own directory so a
+# stage can be re-run without disturbing the others.
+paths:
+  raw: data/raw
+  interim: data/interim
+  processed: data/processed
+  external: data/external
+  manifests: manifests
+
+# Structure resolution.
+#
+# No network lookup runs automatically. Structures are read from a local
+# resolution table you supply (see docs/dataset_protocol.md). This keeps the
+# pipeline reproducible and auditable: the structure a compound had on the day
+# the dataset was frozen is recorded, not re-fetched.
+structure_resolution:
+  # Tab- or comma-separated file with at least: cas_number, smiles
+  # Optional: chemcode, source, retrieved_date, inchi
+  resolution_table: data/external/structure_resolution.tsv
+  # A CAS number alone is never treated as proof of identity. A resolved
+  # structure must carry a named source and a retrieval date.
+  require_source_attribution: true

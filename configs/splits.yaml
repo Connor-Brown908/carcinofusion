@@ -1,0 +1,72 @@
+# Split policy.
+#
+# Splits are assigned over GROUPS OF COMPOUNDS, never over experimental
+# records. Every record belonging to a standardised compound stays with that
+# compound, and every compound sharing a scaffold group stays together in the
+# scaffold split. The split is generated once and frozen.
+
+split_version: v1
+random_seed: 20261029
+
+# Fractions refer to groups of compounds, not records. They are adjusted at
+# assignment time to preserve adequate positives and negatives in each
+# partition; the realised fractions are written to the split report.
+fractions:
+  train: 0.70
+  validation: 0.15
+  test: 0.15
+
+strategies:
+
+  random:
+    role: diagnostic
+    description: >
+      Compound-level random assignment. Used only to compare against
+      conventional baselines that report random-split numbers. Never quoted as
+      the headline result.
+    group_by: compound_id
+
+  scaffold:
+    role: primary
+    description: >
+      Bemis-Murcko scaffold grouping. All compounds sharing a scaffold are
+      assigned to the same partition. This is the development evaluation.
+    group_by: scaffold_group
+    # Largest scaffold groups are assigned to training first, so that rare
+    # scaffolds land in validation and test. This is deliberate: it makes the
+    # evaluation harder, not easier.
+    assignment: largest_group_first
+
+  external:
+    role: final_validation
+    description: >
+      An independently curated dataset held entirely outside the generation
+      process above. Overlap with the internal set is measured, not assumed to
+      be absent.
+    group_by: compound_id
+
+# Leakage measurement. Scaffold grouping reduces leakage; it does not
+# guarantee chemical dissimilarity. The similarity between partitions is
+# measured explicitly and reported.
+leakage_checks:
+  # Exact structural identity across partitions is a hard failure.
+  forbid_inchikey_overlap: true
+  forbid_scaffold_overlap_in_scaffold_split: true
+
+  # Nearest-neighbour Tanimoto similarity from each test compound to the
+  # nearest training compound. Reported as a distribution, with the median
+  # compared against this threshold.
+  similarity:
+    fingerprint: morgan
+    radius: 2
+    n_bits: 2048
+    # A median nearest-neighbour similarity at or above this value means the
+    # test set is not measuring generalisation. Reported as a warning, not
+    # silently tolerated.
+    median_warn_threshold: 0.70
+
+# Class balance. If a partition falls below these counts the split report
+# flags it; the allocation may need adjusting rather than being accepted.
+balance:
+  min_positives_per_partition: 10
+  min_negatives_per_partition: 10

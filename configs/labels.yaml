@@ -1,0 +1,137 @@
+# Label policy.
+#
+# This file IS the label definition. The code contains no hard-coded mapping
+# from an experimental assessment to a training label; it reads this file and
+# stamps `label_policy_version` onto every harmonised row. Changing a mapping
+# therefore requires a version bump, which produces a new dataset version with
+# a documented change log.
+#
+# Three label states are used throughout:
+#   1     positive under the stated criteria
+#   0     negative under the stated criteria
+#   null  equivocal, insufficient, conflicting or otherwise unresolved
+#
+# null is NOT negative. Absence of evidence is never recorded as evidence of
+# absence. Rows labelled null are excluded from ordinary binary loss and
+# retained for analysis.
+
+label_policy_version: v1.0.0
+
+endpoint_definition: >
+  Evidence of carcinogenic activity in long-term rodent bioassays, determined
+  from a predefined and reproducible interpretation of experimental records.
+  This is an experimental-evidence endpoint. It is not a claim about human
+  carcinogenicity.
+
+# ---------------------------------------------------------------------------
+# Record-level mapping
+# ---------------------------------------------------------------------------
+# Assessment strings are matched case-insensitively after whitespace collapse.
+# An assessment that matches nothing here becomes null and is counted in the
+# audit report as `unmapped_assessment`. It is never defaulted to 0.
+endpoints:
+
+  # Primary: clearly positive versus clearly negative only.
+  primary:
+    description: >
+      Conservative binary classification. Clear evidence of carcinogenic
+      activity against clear absence of it. Some-evidence and equivocal
+      findings are left unresolved.
+    positive:
+      - clear evidence of carcinogenic activity
+      - clear evidence
+      - positive
+      - carcinogenic
+      - p
+    negative:
+      - no evidence of carcinogenic activity
+      - no evidence
+      - negative
+      - not carcinogenic
+      - n
+    unresolved:
+      - some evidence of carcinogenic activity
+      - some evidence
+      - equivocal evidence of carcinogenic activity
+      - equivocal
+      - e
+      - inadequate study
+      - inadequate
+      - i
+
+  # Sensitivity: some-evidence counted as positive, equivocal still unresolved.
+  sensitivity:
+    description: >
+      Broader classification used to measure how far results depend on the
+      label definition. Some-evidence results are treated as positive.
+      Equivocal findings remain unresolved.
+    positive:
+      - clear evidence of carcinogenic activity
+      - clear evidence
+      - some evidence of carcinogenic activity
+      - some evidence
+      - positive
+      - carcinogenic
+      - p
+    negative:
+      - no evidence of carcinogenic activity
+      - no evidence
+      - negative
+      - not carcinogenic
+      - n
+    unresolved:
+      - equivocal evidence of carcinogenic activity
+      - equivocal
+      - e
+      - inadequate study
+      - inadequate
+      - i
+
+# ---------------------------------------------------------------------------
+# Compound-level aggregation
+# ---------------------------------------------------------------------------
+# A chemical may be positive in one species, sex, route or organ and negative
+# in another. Conflicting evidence is NOT resolved by majority vote.
+aggregation:
+  policy: any_positive_with_conflict_flag
+  description: >
+    A compound is positive if at least one eligible record is positive. A
+    compound is negative only if it has at least `min_negative_records`
+    eligible records, all negative, and no positive record anywhere. Any
+    compound holding both a positive and a negative record is flagged
+    conflicted. Conflicted compounds are excluded from the primary binary
+    training set and retained in full for multi-task and evidence-integration
+    work.
+
+  # A single negative experiment is weak evidence that a chemical is not a
+  # carcinogen. Require corroboration before assigning a negative label.
+  min_negative_records: 1
+
+  # Species restriction for the headline endpoint. Records from other species
+  # are retained in the database and excluded from this endpoint's labels.
+  eligible_species: [rat, mouse]
+
+  # Compounds whose only records are null-labelled stay out of the training
+  # set entirely rather than defaulting either way.
+  exclude_all_null: true
+
+  # How a conflicted compound is handled in the model-ready table.
+  #   exclude  - label set to null, retained with conflict flag set
+  #   positive - treated as positive (NOT recommended; majority-vote-like)
+  conflict_resolution: exclude
+
+# ---------------------------------------------------------------------------
+# Label confidence
+# ---------------------------------------------------------------------------
+# Recorded per compound so that downstream work can weight or filter without
+# re-deriving the evidence.
+confidence:
+  high:
+    description: Three or more eligible records, all agreeing.
+    min_records: 3
+  medium:
+    description: Two eligible records, agreeing.
+    min_records: 2
+  low:
+    description: A single eligible record.
+    min_records: 1

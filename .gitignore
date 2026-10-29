@@ -1,0 +1,29 @@
+# Source data is never committed. It is acquired per the protocol and its
+# checksums are recorded in manifests/, which IS committed.
+data/raw/*
+!data/raw/.gitkeep
+data/interim/*
+!data/interim/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# The external directory holds the resolution table and any external
+# validation set. Commit those deliberately if licensing allows.
+data/external/*
+!data/external/.gitkeep
+
+# Manifests and the freeze lock ARE provenance and should be committed.
+!manifests/*.json
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+*.egg-info/
+
+# Phase 2 artifacts
+data/processed/benchmark/
+data/processed/supabase/
+artifacts/
+*.pt

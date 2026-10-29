@@ -191,6 +191,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--trust-order", action="store_true",
                     help="match by row order (only if the tool kept every row)")
     ap.add_argument("--version", default=None, help="the tool's version, recorded")
+    ap.add_argument("--restrict-to", type=Path, default=None,
+                    help="a head-to-head CSV from scripts/build_headtohead_set.py. "
+                         "Restricts the comparison to compounds the comparator "
+                         "did NOT train on, which is the only subset on which a "
+                         "head-to-head claim is defensible.")
     args = ap.parse_args(argv)
 
     setup_logging()
@@ -202,6 +207,39 @@ def main(argv: list[str] | None = None) -> int:
     endpoint = args.endpoint or bench["task"]["endpoint_name"]
 
     test = load_test_set(processed, endpoint, args.split)
+
+    restriction = None
+    if args.restrict_to:
+        if not args.restrict_to.exists():
+            raise SystemExit(f"{args.restrict_to} not found. Build it with "
+                             f"scripts/build_headtohead_set.py")
+        h2h = pd.read_csv(args.restrict_to)
+        if "seen_by_comparator" not in h2h.columns:
+            raise SystemExit(
+                f"{args.restrict_to} has no seen_by_comparator column; it does "
+                f"not look like a head-to-head set."
+            )
+        keep = set(h2h.loc[~h2h["seen_by_comparator"].astype(bool), "compound_id"])
+        before = len(test)
+        test = test[test["compound_id"].isin(keep)]
+        restriction = {
+            "source": str(args.restrict_to),
+            "n_before": before,
+            "n_after": int(len(test)),
+            "n_excluded_as_seen": before - int(len(test)),
+        }
+        if test.empty:
+            raise SystemExit(
+                f"the restriction leaves no test compounds: all {before} were "
+                f"in the comparator's training set. There is no head-to-head "
+                f"comparison to make against this tool on this split."
+            )
+        LOG.warning(
+            "restricted to %d of %d test compound(s); %d excluded as seen by "
+            "the comparator during its own training. Metrics are NOT "
+            "comparable to full-test-set numbers for any other model.",
+            len(test), before, before - len(test),
+        )
 
     if args.export:
         export(test, args.export)
@@ -365,6 +403,19 @@ def main(argv: list[str] | None = None) -> int:
         # 0.5 is the only defensible threshold.
         "threshold": 0.5,
         "threshold_selected_on": "not_applicable_external_tool",
+        # Most external carcinogenicity tools emit a class, not a calibrated
+        # probability: VEGA returns "Carcinogen" / "NON-Carcinogen" plus an
+        # applicability-domain index. A ranking metric over a two-valued score
+        # is not meaningful, so this flag tells the figure and the analysis to
+        # refuse PR-AUC and ROC-AUC for this run rather than print a number
+        # that looks comparable and is not.
+        "prediction_type": (
+            "binary" if len({r.get("y_score") for r in rows} - {None}) <= 2
+            else "continuous"
+        ),
+        "comparable_metrics": ["balanced_accuracy", "mcc", "sensitivity",
+                               "specificity", "ppv", "npv"],
+        "restriction": restriction,
         "coverage": round(covered / len(test), 4),
         "results": {},
     }
